@@ -329,7 +329,7 @@ Se genera en el primer `scene_enter` de cada escena en la sesión, desde
 | T5 | Muerte, sombra y su recuperación: orden de `geoPool`, `soulLimited` y `geo` | morir y matar la sombra |
 | T6 | Hechizos, focus y nail arts: nombres de estado de `Spell Control` y `Source.name` de cada ataque | lanzar cada hechizo y cada nail art; curarse y cancelar |
 | T7 | Muros y palancas: `scene_object` al salir de la sala | romper un muro en Crossroads |
-| T8 | `FindObjectsOfType<T>(true)` compila contra Unity 2020.2 | `dotnet build` |
+| ~~T8~~ | ✅ `FindObjectsOfType<T>(true)` compila contra Unity 2020.2 (comprobado el 16/11/2026) | — |
 | T9 | Arenas: estados del FSM `Battle Control` | arena de aspids de Crossroads |
 
 ## Changelog

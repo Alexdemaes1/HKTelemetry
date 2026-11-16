@@ -19,15 +19,12 @@ Verificación de la API contra el código, con referencias `archivo:línea`: [ap
 | Verificación de todos los **[verificar]** | ✅ workflow de 11 agentes con verificación adversarial → `docs/api-notes/` y `schema.md` |
 | Nombres `On.*` | ✅ comprobados en `MMHOOK_Assembly-CSharp.dll`. Las sobrecargas llevan sufijo de tipos (`SaveMyState_PersistentBoolData`) |
 | `GodhomeWinLossTracker` | ⏳ falta el enlace |
-| Proyecto C# | ⏳ siguiente paso (plantilla `hksettings`) |
+| Proyecto C# | ✅ `HKTelemetry/` (plantilla `hksettings`). `dotnet build` copia la DLL a `Managed/Mods/HKTelemetry/`. Ruta del juego sobrescribible con `-p:HKManaged=...` |
 
 ## Fase 0: lo que queda
 
-1. Crear el proyecto con `HKModding.HKMod.Templates` (`hksettings`). Referenciar `Managed/`
-   (Assembly-CSharp parcheado, `MMHOOK_Assembly-CSharp.dll`, `PlayMaker.dll`, `UnityEngine.*`,
-   `MonoMod.*`, `Newtonsoft.Json.dll`) y copiar la DLL a `Managed/Mods/HKTelemetry/` al compilar.
-2. Mod vacío: aparece en el menú de mods y escribe una línea en `ModLog.txt`.
-3. Probar que `FindObjectsOfType<T>(true)` compila (T8 del esquema).
+1. **Prueba en el juego:** el mod aparece en el menú de mods y `ModLog.txt` muestra la línea
+   `HKTelemetry v0.1.0 (schema 1) | player_id=... | api=1.5.78.11833-77 | unity=2020.2.2f1 (OK)`.
 
 ---
 
