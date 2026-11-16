@@ -18,7 +18,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSIONS = (1, 2)
 DEFAULT_ROOT = Path(os.environ.get("USERPROFILE", "~")).expanduser() / "AppData/LocalLow/Team Cherry/Hollow Knight/HKTelemetry"
 
 COMMON_FIELDS = ("seq", "t_game", "t_real", "frame", "scene", "type", "p")
@@ -77,8 +77,8 @@ def check_session_json(folder: Path, r: Report) -> dict | None:
         r.err(f"session.json no es JSON válido: {e}")
         return None
 
-    if s.get("schema_version") != SCHEMA_VERSION:
-        r.err(f"schema_version={s.get('schema_version')} (esperado {SCHEMA_VERSION})")
+    if s.get("schema_version") not in SCHEMA_VERSIONS:
+        r.err(f"schema_version={s.get('schema_version')} (esperado uno de {SCHEMA_VERSIONS})")
     for k in ("session_id", "launch_id", "player_id", "start_utc", "game", "save"):
         if not s.get(k):
             r.err(f"session.json sin '{k}'")
@@ -178,7 +178,7 @@ KNOWN_TYPES = {
     "session_start", "session_end", "scene_exit", "scene_enter", "control_ready", "game_state", "perf",
     "hit_taken", "hazard_respawn", "death", "hit_dealt", "enemy_hp_change", "enemy_killed", "enemy_spawn",
     "focus", "fsm_state", "boss_scene", "env_break", "pd_change", "pd_list", "boss_defeated",
-    "ability_gained", "item_got",
+    "ability_gained", "item_got", "map_open", "map_close", "map_pan", "map_marker",
 }
 
 
@@ -190,7 +190,10 @@ def check_gameplay(events: list[dict], r: Report) -> None:
 
     for e in events:
         t, p = e["type"], e.get("p") or {}
-        if t == "hit_dealt" and p.get("kind") == "hit" and p.get("hp_after", 0) > p.get("hp_before", 0):
+        if (t == "hit_dealt" and p.get("kind") == "hit" and p.get("hp_after", 0) > p.get("hp_before", 0)
+                and not p.get("hp_reset") and p.get("hp_before", 0) > p.get("dmg_dealt", 0)):
+            # Si el golpe dejaba la vida a 0 o menos, el FSM del enemigo puede restaurarla (fases de jefe):
+            # las sesiones nuevas lo marcan con hp_reset; las antiguas se reconocen por hp_before <= dmg.
             r.warn(f"seq={e['seq']} hit_dealt con hp que sube ({p.get('hp_before')}->{p.get('hp_after')})")
         elif t == "hit_taken" and p.get("hp_after", 0) + p.get("blue_after", 0) >= p.get("hp_before", 0) + p.get("blue_before", 0):
             r.warn(f"seq={e['seq']} hit_taken sin perder vida")
@@ -210,10 +213,34 @@ def check_gameplay(events: list[dict], r: Report) -> None:
         f"entorno roto={c['env_break']}"
     )
     r.info.append(f"PlayerData: pd_change={c['pd_change']} pd_list={c['pd_list']}")
+    check_map(events, r)
     for t in ("boss_defeated", "ability_gained", "item_got"):
         found = [e["p"].get("boss") or e["p"].get("field") for e in events if e["type"] == t]
         if found:
             r.info.append(f"{t}: " + ", ".join(found))
+
+
+def check_map(events: list[dict], r: Report) -> None:
+    """v2: cada map_open se cierra; resumen de uso del mapa."""
+    opened = None
+    uses = Counter()
+    total = 0.0
+    for e in events:
+        t, p = e["type"], e.get("p") or {}
+        if t == "map_open":
+            if opened is not None:
+                r.warn(f"seq={e['seq']} map_open sin cerrar el anterior (seq={opened['seq']})")
+            opened = e
+            uses[p.get("mode")] += 1
+        elif t == "map_close":
+            if opened is None:
+                r.warn(f"seq={e['seq']} map_close sin map_open")
+            total += p.get("dur_game") or 0
+            opened = None
+    if opened is not None:
+        r.warn(f"map_open seq={opened['seq']} sin map_close")
+    if uses:
+        r.info.append("mapa: " + ", ".join(f"{k}={v}" for k, v in uses.items()) + f", tiempo total {total:.0f} s")
 
 
 def check_pd_files(folder: Path, s: dict | None, r: Report) -> None:

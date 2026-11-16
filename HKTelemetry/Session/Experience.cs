@@ -24,6 +24,23 @@ namespace HKTelemetry.Session
         private readonly Dictionary<string, object> _data = new Dictionary<string, object>();
         private readonly List<Dictionary<string, object>> _saves = new List<Dictionary<string, object>>();
 
+        private static Experience _launch;
+
+        /// <summary>
+        /// La experiencia es «antes del estudio»: basta con calcularla una vez por arranque del juego.
+        /// Así la lectura y descifrado de los saves (hilo principal) ocurre una sola vez, durante el
+        /// fundido de la primera carga.
+        /// </summary>
+        public static Experience ForLaunch(GameManager gm)
+        {
+            if (_launch == null)
+            {
+                _launch = new Experience();
+                _launch.Collect(gm);
+            }
+            return _launch;
+        }
+
         /// <summary>Copia segura para serializar en session.json.</summary>
         public Dictionary<string, object> Snapshot()
         {

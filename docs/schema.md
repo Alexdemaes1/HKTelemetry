@@ -1,4 +1,4 @@
-# HKTelemetry: esquema de datos (schema_version 1)
+# HKTelemetry: esquema de datos (schema_version 2)
 
 > Fuente de verdad del formato. Cualquier cambio incrementa `schema_version` y se anota en el
 > changelog del final. Cada campo indica **de dónde sale** en el juego. Las referencias
@@ -229,12 +229,27 @@ guardan al morir. Para tener el momento exacto: `breakable` (en vivo) y la muert
 Los muros y palancas por FSM solo tienen resolución de salida de sala. **[test]**: comprobar que
 los objetos que se desactivan solos se guardan.
 
+### 4.7 Mapa (v2)
+
+Cuándo y cómo se abre el mapa. Fuente: los métodos públicos de `GameMap` que llaman los FSM del juego.
+
+| `type` | Payload `p` | Fuente |
+|---|---|---|
+| `map_open` | `mode` (`quick`/`inventory`), `area` (área mostrada en el mapa rápido: `Crossroads`, `Greenpath`…; null en el inventario), `map_zone`, `has_map`, `has_area_map` (si tiene el mapa de esa área), `room_mapped` (sala con sprite completo: `scenesMapped` o `mapAllRooms`), `has_quill`, `compass_equipped` (amuleto 2), `compass_shown`, `in_room`, `markers_placed`, `x, y, hero_state, accepting` | Mapa rápido: `On.GameMap.QuickMap<Área>` (14 métodos). Inventario: `On.GameMap.WorldMap` |
+| `map_close` | `mode`, `reason` (`close_quick_map`/`inventory_closed`/`scene_transition`/`death`/`quit_menu`/`session_end`/`reopen`), `dur_real`, `dur_game` | `On.GameMap.CloseQuickMap`; inventario: el FSM del inventario vuelve al estado que tenía cerrado (capturado en el primer `control_ready`); forzados desde escena, muerte y fin de sesión |
+| `map_pan` | `on`, `via` (`start_pan`/`stop_pan`/`set_can_pan`), `mode` | `On.GameMap.StartPan/StopPan/SetCanPan`: el jugador recorre el mapa del inventario |
+| `map_marker` | `op` (`place`/`remove`), `before`, `after` | `On.MapMarkerMenu.PlaceMarker/RemoveMarker`, solo si cambia el número de marcadores |
+| `fsm_state` (`fsm: "Inventory"`) | `from, to` | sondeo de `GameManager.inventoryFSM.ActiveStateName`: paneles del inventario. Los nombres de estado solo existen en los assets: se escriben una vez por arranque a `ModLog.txt` |
+
+El tiempo con el mapa abierto cuenta como tiempo de juego (`t_game`): el juego no se pausa. Las pulsaciones de
+`quickMap` y `openInventory` irán además en `inputs.csv` (fase 5).
+
 ### 4.6 Sistema
 
 | `type` | Payload `p` | Fuente |
 |---|---|---|
 | `device` | `from, to` | sondeo de `inputActions.LastInputType` (`KeyBindingSource`/`MouseBindingSource` = teclado, `DeviceBindingSource` = mando) |
-| `perf` | `fps, dt_max_ms, mod_us_avg, mod_us_max, vsync, target_fps, dropped` | cada 1 s de tiempo real, desde el `Runner`. `mod_us_*` = tiempo del `Update` del mod por frame (µs): sirve para descartar que el mod cause tirones o input lag |
+| `perf` | `fps, dt_max_ms, mod_us_avg, mod_us_max, vsync, target_fps, dropped` | cada 1 s de tiempo real, desde el `Runner`. **v2:** `mod_us_*` = tiempo TOTAL del mod en el hilo del juego por frame (µs): hooks + sondeos + HUD (v1 solo medía el `Update` del Runner). Sirve para descartar que el mod cause tirones o input lag |
 | `writer` | `status` (`ok`/`error`/`dropping`), `msg` | hilo de escritura |
 
 ## 5. `frames.csv`
@@ -358,4 +373,5 @@ Se genera en el primer `scene_enter` de cada escena en la sesión, desde
 
 ## Changelog
 
+- **v2** (17/11/2026): eventos de mapa (§4.7); `perf.mod_us_*` mide todo el tiempo del mod (hooks incluidos); `hit_dealt.hp_reset`; `death`/`hazard_respawn` llevan la fuente del golpe letal y se emiten después de su `hit_taken`; el `scene_exit` de «Guardar y salir» se emite al llegar a `Quit_To_Menu` (una salida cancelada ya no deja rastro); `env_break` solo cuando el objeto se rompe de verdad; motivo `new_game` para `Opening_Sequence → Tutorial_01`.
 - **v1** (16/11/2026): esquema inicial, verificado contra el código descompilado de la 1.5.78. Experiencia automática (§3.2) en lugar de autodeclarada; 60 Hz por defecto.

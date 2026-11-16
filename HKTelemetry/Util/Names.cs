@@ -45,7 +45,7 @@ namespace HKTelemetry.Util
             else
                 key = scene + "/" + HierarchyPath(go.transform);
 
-            return new Json()
+            return Json.Obj()
                 .S("type", string.IsNullOrEmpty(journal) ? Normalize(go.name) : journal)
                 .S("name", go.name)
                 .S("key", key)

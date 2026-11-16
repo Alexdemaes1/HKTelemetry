@@ -35,6 +35,8 @@ namespace HKTelemetry.Recorders
         private static int _fsmTransitionFrame = -1; // frame en que la acción PlayMaker BeginSceneTransition disparó
         private static string _fsmOwner;            // GameObject dueño de ese FSM (la puerta, el ascensor...)
         private static string _quitReason;          // quit_menu / ending mientras se vuelve al menú
+        private static string _quitSaveMode;
+        private static bool _quitSaved;             // ya se tomó la foto final tras el guardado de la salida
         private static GameState? _lastState;
         private static bool _lastPaused;
 
@@ -67,6 +69,8 @@ namespace HKTelemetry.Recorders
             _earlyControl = false;
             _pendingDeathZone = null;
             _quitReason = null;
+            _quitSaveMode = null;
+            _quitSaved = false;
             _lastState = null;
         }
 
@@ -88,7 +92,12 @@ namespace HKTelemetry.Recorders
         private static void OnSavegameSave(int slot) => Safe.Run("session.save", () =>
         {
             // Volviendo al menú: el juego acaba de guardar (playTime y % al día). Mejor foto final posible.
-            if (_quitReason != null) SessionManager.TakeProgressEnd();
+            // Una sola vez: ReturnToMainMenu guarda exactamente una vez.
+            if (_quitReason != null && !_quitSaved)
+            {
+                _quitSaved = true;
+                SessionManager.TakeProgressEnd();
+            }
         });
 
         private static void OnApplicationQuit() => Safe.Run("session.quit", () =>
@@ -100,11 +109,12 @@ namespace HKTelemetry.Recorders
             Safe.Run("scene.quit_menu", () =>
             {
                 if (!SessionManager.Active) return;
+                // NO se emite scene_exit aquí: con SaveAndCancelOnFail el juego puede cancelar la salida
+                // si falla el guardado (GameManager.cs:3054). Se emite al llegar a Quit_To_Menu.
                 _quitReason = IsEndingScene(CurrentScene) ? "ending" : "quit_menu";
-                SessionManager.TakeProgressEnd(); // por si el guardado falla; se repite tras guardar
-                SessionManager.Emit("scene_exit", new Json()
-                    .S("from", CurrentScene).S("to", QuitToMenuScene).S("reason", _quitReason)
-                    .S("save_mode", saveMode.ToString()).End());
+                _quitSaveMode = saveMode.ToString();
+                _quitSaved = false;
+                MapRecorder.ForceClose("quit_menu");
             });
             return orig(self, saveMode, callback);
         }
@@ -116,7 +126,11 @@ namespace HKTelemetry.Recorders
             if (name == QuitToMenuScene)
             {
                 // Sin _quitReason = no pasó por ReturnToMainMenu (EmergencyReturnToMenu, p. ej. mando desconectado).
-                SessionManager.End(_quitReason ?? "emergency_menu", appQuit: false);
+                string reason = _quitReason ?? "emergency_menu";
+                SessionManager.Emit("scene_exit", Json.Obj()
+                    .S("from", CurrentScene).S("to", QuitToMenuScene).S("reason", reason)
+                    .S("save_mode", _quitSaveMode).End());
+                SessionManager.End(reason, appQuit: false);
                 _quitReason = null;
             }
             else if (name == PermaDeathScene)
@@ -167,7 +181,7 @@ namespace HKTelemetry.Recorders
                 string to = self.levelName != null ? self.levelName.Value : null;
                 if (string.IsNullOrEmpty(to)) return;
                 var owner = self.Owner;
-                SessionManager.Emit("scene_exit", new Json()
+                SessionManager.Emit("scene_exit", Json.Obj()
                     .S("from", CurrentScene)
                     .S("to", to)
                     .S("reason", to == "Cinematic_Stag_travel" ? "stag" : IsEndingScene(to) ? "ending" : "fsm_load")
@@ -203,6 +217,7 @@ namespace HKTelemetry.Recorders
         private static void RecordExit(GameManager self, GameManager.SceneLoadInfo info)
         {
             if (!SessionManager.Active || info == null) return;
+            _quitReason = null; // si hay una transición normal, la salida al menú se canceló
 
             // Si ya hay una carga en curso el juego ignora la petición (GameManager.cs:474): no hay salida real.
             if (ReflectionHelper.GetField<GameManager, SceneLoad>(self, "sceneLoad") != null) return;
@@ -266,7 +281,7 @@ namespace HKTelemetry.Recorders
             }
 
             _pendingDeathZone = null;
-            SessionManager.Emit("scene_exit", new Json()
+            SessionManager.Emit("scene_exit", Json.Obj()
                 .S("from", CurrentScene)
                 .S("to", to)
                 .S("reason", reason)
@@ -291,7 +306,7 @@ namespace HKTelemetry.Recorders
                               : self.entryGateName == "door_stagExit" ? "stag"
                               : IsEndingScene(destScene) ? "ending"
                               : "cutscene";
-                SessionManager.Emit("scene_exit", new Json()
+                SessionManager.Emit("scene_exit", Json.Obj()
                     .S("from", CurrentScene).S("to", destScene).S("reason", reason)
                     .S("entry_gate", self.entryGateName).S("info_type", "LoadScene").End());
                 MarkExit();
@@ -305,6 +320,7 @@ namespace HKTelemetry.Recorders
             _awaitingControl = false;
             _earlyControl = false;
             _exitTReal = Clock.TReal;
+            MapRecorder.ForceClose("scene_transition"); // BeginSceneTransition manda INVENTORY CANCEL
         }
 
         // ---------------- entradas de escena ----------------
@@ -323,8 +339,10 @@ namespace HKTelemetry.Recorders
                 {
                     // Cambio de sala por un camino no enganchado: se emite la salida ahora (tiempo = llegada)
                     // para que cada scene_enter tenga su scene_exit. Así se ve y se puede corregir.
-                    SessionManager.Emit("scene_exit", new Json()
-                        .S("from", CurrentScene).S("to", scene).S("reason", "unhooked")
+                    // Opening_Sequence → Tutorial_01: la cinemática inicial carga con Unity directamente.
+                    string reason = CurrentScene == "Opening_Sequence" ? "new_game" : "unhooked";
+                    SessionManager.Emit("scene_exit", Json.Obj()
+                        .S("from", CurrentScene).S("to", scene).S("reason", reason)
                         .S("entry_gate", self.entryGateName).B("synthetic", true).End());
                     MarkExit();
                 }
@@ -336,7 +354,7 @@ namespace HKTelemetry.Recorders
                     sceneType = self.sm.sceneType.ToString();
                 }
                 CurrentScene = scene;
-                SessionManager.Emit("scene_enter", new Json()
+                SessionManager.Emit("scene_enter", Json.Obj()
                     .S("scene", scene)
                     .S("entry_gate", self.entryGateName)
                     .S("map_zone", mapZone)
@@ -374,9 +392,10 @@ namespace HKTelemetry.Recorders
         private static void EmitControlReady(bool early)
         {
             _awaitingControl = false;
-            SessionManager.Emit("control_ready", new Json().S("scene", CurrentScene).B("early", early).End());
+            SessionManager.Emit("control_ready", Json.Obj().S("scene", CurrentScene).B("early", early).End());
             SessionManager.TakeProgressStartIfNeeded();
             CombatRecorder.OnControlReady();
+            MapRecorder.OnControlReady();
             PlayerDataRecorder.SeedAndDump();
         }
 
@@ -392,7 +411,7 @@ namespace HKTelemetry.Recorders
             GameState gs = gm.gameState;
             bool paused = gm.isPaused;
             if (_lastState == gs && _lastPaused == paused) return;
-            SessionManager.Emit("game_state", new Json()
+            SessionManager.Emit("game_state", Json.Obj()
                 .S("from", _lastState?.ToString())
                 .S("to", gs.ToString())
                 .B("paused", paused)

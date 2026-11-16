@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using GlobalEnums;
@@ -12,15 +13,19 @@ namespace HKTelemetry.Recorders
     /// Combate (docs/schema.md §4.2): hit_taken, hazard_respawn, death, hit_dealt, enemy_hp_change,
     /// enemy_killed, enemy_spawn, focus, fsm_state y boss_scene.
     ///
-    /// Reglas: orig(...) siempre FUERA de Safe.Run; los hooks que devuelven valor devuelven su entrada;
-    /// no se suscribe ningún hook que altere el juego (ver CLAUDE.md, «Hooks prohibidos»).
+    /// Reglas:
+    /// - orig(...) siempre FUERA de las secciones protegidas; los hooks que devuelven valor devuelven su entrada.
+    /// - Hooks calientes (TakeDamage se llama en cada frame de física mientras hay contacto) sin lambdas:
+    ///   try/catch explícito + Safe.Enter/Exit, para no generar basura.
+    /// - Orden causal: lo que el juego dispara DENTRO de un golpe (muerte del jugador, hazard, muerte del
+    ///   enemigo) se guarda y se emite después del evento del golpe.
     /// </summary>
     internal static class CombatRecorder
     {
         private sealed class Enemy
         {
             public HealthManager Hm;
-            public string Json;   // bloque enemy cacheado
+            public string Block;  // bloque "enemy" en JSON, cacheado
             public int LastHp;
             public int HpMax;
         }
@@ -30,11 +35,20 @@ namespace HKTelemetry.Recorders
         private static readonly List<int> DeadKeys = new List<int>();
 
         private static bool _hooked;
-        private static bool _deathEmitted;      // un evento death por vida
-        private static string _lastHitSrc;       // fuente del último golpe recibido (para death)
+        private static bool _deathEmitted;       // un evento death por vida
+        private static string _lastHitSrc;       // fuente del último golpe recibido
         private static float _lastHazardTime = -10f;
-        private static bool _inEnemyHit;         // dentro de HealthManager.TakeDamage
-        private static string _pendingKill;      // enemy_killed producido durante ese TakeDamage
+
+        // Golpe al jugador en curso (dentro de orig TakeDamage).
+        private static bool _inHeroDamage;
+        private static GameObject _curHitGo;     // nombre resuelto solo si hace falta (go.name crea un string)
+        private static bool _pendingMapCloseDeath;
+        private static readonly List<KeyValuePair<string, string>> PendingHero = new List<KeyValuePair<string, string>>();
+
+        // Golpe a un enemigo en curso (TakeDamage o ApplyExtraDamage).
+        private static int _inEnemyHit;
+        private static string _pendingKill;
+
         private static bool _focusing;
         private static string _lastSpellState;
         private static BossSceneController _boss;
@@ -65,8 +79,14 @@ namespace HKTelemetry.Recorders
         {
             Enemies.Clear();
             KilledThisVisit.Clear();
+            PendingHero.Clear();
+            _pendingMapCloseDeath = false;
+            _curHitGo = null;
             _deathEmitted = false;
             _lastHitSrc = null;
+            _inHeroDamage = false;
+            _inEnemyHit = 0;
+            _pendingKill = null;
             _focusing = false;
             _lastSpellState = null;
             _boss = null;
@@ -76,73 +96,111 @@ namespace HKTelemetry.Recorders
 
         public static void OnControlReady() => _deathEmitted = false;
 
+        private static string CurHitSrc() => _curHitGo != null ? _curHitGo.name : null;
+
+        /// <summary>Emite ya, o lo guarda si estamos dentro del golpe que lo provocó.</summary>
+        private static void EmitHero(string type, string payload)
+        {
+            if (_inHeroDamage) PendingHero.Add(new KeyValuePair<string, string>(type, payload));
+            else SessionManager.Emit(type, payload);
+        }
+
         // ---------------- jugador ----------------
 
         private static void OnHeroTakeDamage(On.HeroController.orig_TakeDamage orig, HeroController self,
             GameObject go, CollisionSide damageSide, int damageAmount, int hazardType)
         {
-            // TakeDamage se llama en cada frame de física mientras hay contacto: solo se emite si cambia la vida.
             int hp0 = 0, blue0 = 0;
-            bool ok = Safe.Run("combat.hit_taken.pre", () =>
+            bool ok = false;
+            long t = Safe.Enter();
+            try
             {
-                if (!SessionManager.Active) return false;
-                var pd = self.playerData;
-                hp0 = pd.health;
-                blue0 = pd.healthBlue;
-                return true;
-            }, false);
+                if (SessionManager.Active)
+                {
+                    var pd = self.playerData;
+                    hp0 = pd.health;
+                    blue0 = pd.healthBlue;
+                    _curHitGo = go;
+                    _inHeroDamage = true;
+                    _pendingMapCloseDeath = false;
+                    PendingHero.Clear();
+                    ok = true;
+                }
+            }
+            catch (Exception e) { Safe.Report("combat.hit_taken.pre", e); }
+            finally { Safe.Exit(t); }
 
-            orig(self, go, damageSide, damageAmount, hazardType);
+            try { orig(self, go, damageSide, damageAmount, hazardType); }
+            finally { _inHeroDamage = false; }
 
             if (!ok) return;
-            Safe.Run("combat.hit_taken", () =>
+            t = Safe.Enter();
+            try
             {
                 var pd = self.playerData;
                 int hp1 = pd.health, blue1 = pd.healthBlue;
-                if (hp1 == hp0 && blue1 == blue0) return;
-                string src = go != null ? go.name : null;
-                _lastHitSrc = src;
-                var pos = self.transform.position;
-                SessionManager.Emit("hit_taken", new Json()
-                    .S("src", src)
-                    .I("hazard_type", hazardType) // entero crudo: 1 enemigo, 2 pinchos, 3 ácido, 4 lava, 5 foso
-                    .S("side", damageSide.ToString())
-                    .I("raw_dmg", damageAmount)
-                    .I("hp_before", hp0).I("hp_after", hp1)
-                    .I("blue_before", blue0).I("blue_after", blue1)
-                    .B("overcharmed", pd.overcharmed)
-                    .I("boss_level", BossLevel())
-                    .N("x", pos.x).N("y", pos.y)
-                    .End());
-            });
+                // TakeDamage se llama en cada frame de física con contacto: solo si cambia la vida.
+                if (hp1 != hp0 || blue1 != blue0)
+                {
+                    _lastHitSrc = CurHitSrc();
+                    var pos = self.transform.position;
+                    SessionManager.Emit("hit_taken", Json.Obj()
+                        .S("src", _lastHitSrc)
+                        .I("hazard_type", hazardType) // entero crudo: 1 enemigo, 2 pinchos, 3 ácido, 4 lava, 5 foso
+                        .S("side", EnumNames<CollisionSide>.Of((int)damageSide))
+                        .I("raw_dmg", damageAmount)
+                        .I("hp_before", hp0).I("hp_after", hp1)
+                        .I("blue_before", blue0).I("blue_after", blue1)
+                        .B("overcharmed", pd.overcharmed)
+                        .I("boss_level", BossLevel())
+                        .N("x", pos.x).N("y", pos.y)
+                        .End());
+                }
+                // Muerte o hazard provocados por este golpe: después del hit_taken.
+                for (int i = 0; i < PendingHero.Count; i++) SessionManager.Emit(PendingHero[i].Key, PendingHero[i].Value);
+                PendingHero.Clear();
+                if (_pendingMapCloseDeath) { _pendingMapCloseDeath = false; MapRecorder.ForceClose("death"); }
+            }
+            catch (Exception e) { Safe.Report("combat.hit_taken", e); }
+            finally { Safe.Exit(t); }
         }
 
         private static IEnumerator OnDieFromHazard(On.HeroController.orig_DieFromHazard orig, HeroController self,
             HazardType hazardType, float angle)
         {
-            Safe.Run("combat.hazard", () =>
+            long t = Safe.Enter();
+            try
             {
-                if (!SessionManager.Active) return;
-                _lastHazardTime = Time.realtimeSinceStartup;
-                var pos = self.transform.position;
-                SessionManager.Emit("hazard_respawn", new Json()
-                    .S("hazard", hazardType.ToString()).S("src", _lastHitSrc)
-                    .N("x", pos.x).N("y", pos.y).End());
-            });
+                if (SessionManager.Active)
+                {
+                    _lastHazardTime = Time.realtimeSinceStartup;
+                    var pos = self.transform.position;
+                    EmitHero("hazard_respawn", Json.Obj()
+                        .S("hazard", EnumNames<HazardType>.Of((int)hazardType))
+                        .S("src", _inHeroDamage ? CurHitSrc() : _lastHitSrc)
+                        .N("x", pos.x).N("y", pos.y).End());
+                }
+            }
+            catch (Exception e) { Safe.Report("combat.hazard", e); }
+            finally { Safe.Exit(t); }
             return orig(self, hazardType, angle);
         }
 
         /// <summary>KillOnContact llama a HazardRespawn sin pasar por DieFromHazard: se cubre aquí.</summary>
         private static IEnumerator OnHazardRespawn(On.HeroController.orig_HazardRespawn orig, HeroController self)
         {
-            Safe.Run("combat.hazard_direct", () =>
+            long t = Safe.Enter();
+            try
             {
-                if (!SessionManager.Active) return;
-                if (Time.realtimeSinceStartup - _lastHazardTime < 5f) return; // ya registrado por DieFromHazard
-                var pos = self.transform.position;
-                SessionManager.Emit("hazard_respawn", new Json()
-                    .S("hazard", "kill_on_contact").N("x", pos.x).N("y", pos.y).End());
-            });
+                if (SessionManager.Active && Time.realtimeSinceStartup - _lastHazardTime >= 5f)
+                {
+                    var pos = self.transform.position;
+                    SessionManager.Emit("hazard_respawn", Json.Obj()
+                        .S("hazard", "kill_on_contact").N("x", pos.x).N("y", pos.y).End());
+                }
+            }
+            catch (Exception e) { Safe.Report("combat.hazard_direct", e); }
+            finally { Safe.Exit(t); }
             return orig(self);
         }
 
@@ -154,38 +212,51 @@ namespace HKTelemetry.Recorders
             var pd = hc.playerData;
             var pos = hc.transform.position;
             var gm = GameManager.UnsafeInstance;
-            SessionManager.Emit("death", new Json()
+            EmitHero("death", Json.Obj()
                 .S("zone_kind", zoneKind)
-                .S("src", _lastHitSrc)
+                .S("src", _inHeroDamage ? CurHitSrc() : _lastHitSrc)
                 .I("geo_before", pd.geo)
-                .S("map_zone", gm != null && gm.sm != null ? gm.sm.mapZone.ToString() : null)
+                .S("map_zone", gm != null && gm.sm != null ? EnumNames<MapZone>.Of((int)gm.sm.mapZone) : null)
                 .I("boss_level", BossLevel())
                 .N("x", pos.x).N("y", pos.y)
                 .End());
+            // El cierre del mapa va después de la muerte (y de su hit_taken si murió de un golpe).
+            if (_inHeroDamage) _pendingMapCloseDeath = true;
+            else MapRecorder.ForceClose("death");
         }
 
         private static void OnStartMPDrain(On.HeroController.orig_StartMPDrain orig, HeroController self, float time)
         {
-            Safe.Run("combat.focus_start", () =>
+            long t = Safe.Enter();
+            try
             {
-                if (!SessionManager.Active) return;
-                _focusing = true;
-                var pd = self.playerData;
-                SessionManager.Emit("focus", new Json().S("phase", "start").I("mp", pd.MPCharge)
-                    .I("hp", pd.health).N("time", time).End());
-            });
+                if (SessionManager.Active)
+                {
+                    _focusing = true;
+                    var pd = self.playerData;
+                    SessionManager.Emit("focus", Json.Obj().S("phase", "start").I("mp", pd.MPCharge)
+                        .I("hp", pd.health).N("time", time).End());
+                }
+            }
+            catch (Exception e) { Safe.Report("combat.focus_start", e); }
+            finally { Safe.Exit(t); }
             orig(self, time);
         }
 
         private static void OnStopMPDrain(On.HeroController.orig_StopMPDrain orig, HeroController self)
         {
-            Safe.Run("combat.focus_stop", () =>
+            long t = Safe.Enter();
+            try
             {
-                if (!SessionManager.Active || !_focusing) return;
-                _focusing = false;
-                var pd = self.playerData;
-                SessionManager.Emit("focus", new Json().S("phase", "stop").I("mp", pd.MPCharge).I("hp", pd.health).End());
-            });
+                if (SessionManager.Active && _focusing)
+                {
+                    _focusing = false;
+                    var pd = self.playerData;
+                    SessionManager.Emit("focus", Json.Obj().S("phase", "stop").I("mp", pd.MPCharge).I("hp", pd.health).End());
+                }
+            }
+            catch (Exception e) { Safe.Report("combat.focus_stop", e); }
+            finally { Safe.Exit(t); }
             orig(self);
         }
 
@@ -196,7 +267,7 @@ namespace HKTelemetry.Recorders
             int iid = hm.gameObject.GetInstanceID();
             if (!Enemies.TryGetValue(iid, out var e))
             {
-                e = new Enemy { Hm = hm, Json = Names.EnemyJson(hm, SceneRecorder.CurrentScene), LastHp = hm.hp, HpMax = hm.hp };
+                e = new Enemy { Hm = hm, Block = Names.EnemyJson(hm, SceneRecorder.CurrentScene), LastHp = hm.hp, HpMax = hm.hp };
                 Enemies[iid] = e;
             }
             return e;
@@ -205,58 +276,79 @@ namespace HKTelemetry.Recorders
         private static void OnEnemyStart(On.HealthManager.orig_Start orig, HealthManager self)
         {
             orig(self); // Start escala la vida en Godhome: se lee después
-            Safe.Run("combat.enemy_start", () => { if (SessionManager.Active) Track(self); });
+            long t = Safe.Enter();
+            try { if (SessionManager.Active) Track(self); }
+            catch (Exception e) { Safe.Report("combat.enemy_start", e); }
+            finally { Safe.Exit(t); }
         }
 
         private static void OnEnemyTakeDamage(On.HealthManager.orig_TakeDamage orig, HealthManager self, HitInstance hit)
         {
             int hp0 = self.hp;
-            _inEnemyHit = true;
+            string outerKill = _pendingKill;
+            _inEnemyHit++;
             _pendingKill = null;
             try { orig(self, hit); }
-            finally { _inEnemyHit = false; }
+            finally { _inEnemyHit--; }
 
-            Safe.Run("combat.hit_dealt", () =>
+            long t = Safe.Enter();
+            try
             {
-                if (!SessionManager.Active) return;
-                var e = Track(self);
-                int hp1 = self.hp;
-                e.LastHp = hp1;
-                if (hp0 > e.HpMax) e.HpMax = hp0;
-                SessionManager.Emit("hit_dealt", HitJson("hit", e, hit, hp0, hp1));
-                if (_pendingKill != null) SessionManager.Emit("enemy_killed", _pendingKill);
-            });
-            _pendingKill = null;
+                if (SessionManager.Active)
+                {
+                    var e = Track(self);
+                    int hp1 = self.hp;
+                    e.LastHp = hp1;
+                    if (hp0 > e.HpMax) e.HpMax = hp0;
+                    EmitHit("hit", e, hit, hp0, hp1);
+                    if (_pendingKill != null) SessionManager.Emit("enemy_killed", _pendingKill);
+                }
+            }
+            catch (Exception ex) { Safe.Report("combat.hit_dealt", ex); }
+            finally { Safe.Exit(t); _pendingKill = outerKill; }
         }
 
         private static void OnEnemyInvincible(On.HealthManager.orig_Invincible orig, HealthManager self, HitInstance hit)
         {
-            Safe.Run("combat.blocked", () =>
+            long t = Safe.Enter();
+            try
             {
-                if (!SessionManager.Active) return;
-                var e = Track(self);
-                SessionManager.Emit("hit_dealt", HitJson("blocked", e, hit, self.hp, self.hp));
-            });
+                if (SessionManager.Active)
+                    EmitHit("blocked", Track(self), hit, self.hp, self.hp);
+            }
+            catch (Exception e) { Safe.Report("combat.blocked", e); }
+            finally { Safe.Exit(t); }
             orig(self, hit);
         }
 
-        /// <summary>Spore Shroom y Defender's Crest: daño sin HitInstance.</summary>
+        /// <summary>Spore Shroom y Defender's Crest: daño sin HitInstance. Puede matar dentro (Die síncrono).</summary>
         private static void OnEnemyExtraDamage(On.HealthManager.orig_ApplyExtraDamage orig, HealthManager self, int damageAmount)
         {
             int hp0 = self.hp;
-            orig(self, damageAmount);
-            Safe.Run("combat.extra", () =>
+            string outerKill = _pendingKill;
+            _inEnemyHit++;
+            _pendingKill = null;
+            try { orig(self, damageAmount); }
+            finally { _inEnemyHit--; }
+
+            long t = Safe.Enter();
+            try
             {
-                if (!SessionManager.Active) return;
-                var e = Track(self);
-                e.LastHp = self.hp;
-                SessionManager.Emit("hit_dealt", new Json()
-                    .S("kind", "extra").Raw("enemy", e.Json).I("dmg_dealt", damageAmount)
-                    .I("hp_before", hp0).I("hp_after", self.hp).I("hp_max", e.HpMax).End());
-            });
+                if (SessionManager.Active)
+                {
+                    var e = Track(self);
+                    e.LastHp = self.hp;
+                    SessionManager.Emit("hit_dealt", Json.Obj()
+                        .S("kind", "extra").Raw("enemy", e.Block).I("dmg_dealt", damageAmount)
+                        .I("hp_before", hp0).I("hp_after", self.hp).I("hp_max", e.HpMax).End());
+                    if (_pendingKill != null) SessionManager.Emit("enemy_killed", _pendingKill);
+                }
+            }
+            catch (Exception ex) { Safe.Report("combat.extra", ex); }
+            finally { Safe.Exit(t); _pendingKill = outerKill; }
         }
 
-        private static string HitJson(string kind, Enemy e, HitInstance hit, int hp0, int hp1)
+        private static void EmitHit(string kind, Enemy e, HitInstance hit, int hp0, int hp1)
         {
             var src = hit.Source;
             string srcName = null, srcParent = null;
@@ -266,10 +358,13 @@ namespace HKTelemetry.Recorders
                 var p = src.transform.parent;
                 if (p != null) srcParent = p.name;
             }
-            return new Json()
+            // Todos los valores calculados antes de abrir el sobre (ver SessionManager.EmitBegin).
+            var j = SessionManager.EmitBegin("hit_dealt");
+            if (j == null) return;
+            SessionManager.EmitEnd(j
                 .S("kind", kind)
-                .Raw("enemy", e.Json)
-                .S("attack_type", hit.AttackType.ToString())
+                .Raw("enemy", e.Block)
+                .S("attack_type", EnumNames<AttackTypes>.Of((int)hit.AttackType))
                 .S("src", srcName)
                 .S("src_parent", srcParent)
                 .I("dmg_dealt", hit.DamageDealt)
@@ -278,47 +373,62 @@ namespace HKTelemetry.Recorders
                 .I("hp_before", hp0)
                 .I("hp_after", hp1)
                 .I("hp_max", e.HpMax)
-                .End();
+                // El FSM del enemigo puede restaurar la vida dentro del propio golpe (fases del Falso
+                // Caballero: armadura a 0 → 65). No es un error: se marca.
+                .B("hp_reset", hp1 > hp0));
         }
 
         private static void OnEnemyDie(On.HealthManager.orig_Die orig, HealthManager self, float? attackDirection,
             AttackTypes attackType, bool ignoreEvasion)
         {
-            Safe.Run("combat.killed", () =>
-            {
-                if (!SessionManager.Active || self.isDead || self.hasSpecialDeath) return; // especiales: OnReceiveDeathEvent
-                var e = Track(self);
-                int iid = self.gameObject.GetInstanceID();
-                if (!KilledThisVisit.Add(iid)) return;
-
-                // Geo que suelta (HealthManager.cs:663-722): campos privados, +20 % con Fragile Greed (amuleto 24).
-                int s = 0, m = 0, l = 0;
-                if (attackType != AttackTypes.Splatter && attackType != AttackTypes.RuinsWater)
-                {
-                    s = ReflectionHelper.GetField<HealthManager, int>(self, "smallGeoDrops");
-                    m = ReflectionHelper.GetField<HealthManager, int>(self, "mediumGeoDrops");
-                    l = ReflectionHelper.GetField<HealthManager, int>(self, "largeGeoDrops");
-                    var pd = PlayerData.instance;
-                    if (pd.equippedCharm_24 && !pd.brokenCharm_24)
-                    {
-                        s += Mathf.CeilToInt(s * 0.2f); m += Mathf.CeilToInt(m * 0.2f); l += Mathf.CeilToInt(l * 0.2f);
-                    }
-                }
-                var pos = self.transform.position;
-                string json = new Json()
-                    .Raw("enemy", e.Json)
-                    .S("attack_type", attackType.ToString())
-                    .I("hp_max", e.HpMax)
-                    .I("geo_small", s).I("geo_med", m).I("geo_large", l)
-                    .I("geo_value", s + 5 * m + 25 * l)
-                    .B("special", false)
-                    .N("x", pos.x).N("y", pos.y)
-                    .End();
-                // Si muere dentro de TakeDamage, se emite después del hit_dealt que lo mató (orden lógico).
-                if (_inEnemyHit) _pendingKill = json;
-                else SessionManager.Emit("enemy_killed", json);
-            });
+            long t = Safe.Enter();
+            try { RecordKill(self, attackType); }
+            catch (Exception e) { Safe.Report("combat.killed", e); }
+            finally { Safe.Exit(t); }
             orig(self, attackDirection, attackType, ignoreEvasion);
+        }
+
+        private static void RecordKill(HealthManager self, AttackTypes attackType)
+        {
+            if (!SessionManager.Active || self.isDead || self.hasSpecialDeath) return; // especiales: OnReceiveDeathEvent
+            var e = Track(self);
+            int iid = self.gameObject.GetInstanceID();
+            if (!KilledThisVisit.Add(iid)) return;
+            // Daño aplicado sin TakeDamage justo antes de morir (Flukenest: SpellFluke.cs:92 resta hp y
+            // llama a Die): se registra ahora, antes de la muerte, porque el sondeo llegaría tarde o nunca.
+            if (_inEnemyHit == 0 && self.hp != e.LastHp)
+            {
+                SessionManager.Emit("enemy_hp_change", Json.Obj()
+                    .Raw("enemy", e.Block).I("hp_before", e.LastHp).I("hp_after", self.hp).End());
+                e.LastHp = self.hp;
+            }
+
+            // Geo que suelta (HealthManager.cs:663-722): campos privados, +20 % con Fragile Greed (amuleto 24).
+            int s = 0, m = 0, l = 0;
+            if (attackType != AttackTypes.Splatter && attackType != AttackTypes.RuinsWater)
+            {
+                s = ReflectionHelper.GetField<HealthManager, int>(self, "smallGeoDrops");
+                m = ReflectionHelper.GetField<HealthManager, int>(self, "mediumGeoDrops");
+                l = ReflectionHelper.GetField<HealthManager, int>(self, "largeGeoDrops");
+                var pd = PlayerData.instance;
+                if (pd.equippedCharm_24 && !pd.brokenCharm_24)
+                {
+                    s += Mathf.CeilToInt(s * 0.2f); m += Mathf.CeilToInt(m * 0.2f); l += Mathf.CeilToInt(l * 0.2f);
+                }
+            }
+            var pos = self.transform.position;
+            string json = Json.Obj()
+                .Raw("enemy", e.Block)
+                .S("attack_type", EnumNames<AttackTypes>.Of((int)attackType))
+                .I("hp_max", e.HpMax)
+                .I("geo_small", s).I("geo_med", m).I("geo_large", l)
+                .I("geo_value", s + 5 * m + 25 * l)
+                .B("special", false)
+                .N("x", pos.x).N("y", pos.y)
+                .End();
+            // Si muere dentro de un golpe, se emite después del hit_dealt que lo mató (orden causal).
+            if (_inEnemyHit > 0) _pendingKill = json;
+            else SessionManager.Emit("enemy_killed", json);
         }
 
         /// <summary>Muertes por FSM (muchos jefes con hasSpecialDeath) que no pasan por HealthManager.Die.</summary>
@@ -327,9 +437,10 @@ namespace HKTelemetry.Recorders
         {
             // Los parámetros ref NO se tocan.
             if (eventAlreadyReceived) return;
-            var go = ede != null ? ede.gameObject : null;
-            Safe.Run("combat.killed_special", () =>
+            long t = Safe.Enter();
+            try
             {
+                var go = ede != null ? ede.gameObject : null;
                 if (!SessionManager.Active || go == null) return;
                 var hm = go.GetComponent<HealthManager>();
                 if (hm == null) return;
@@ -337,27 +448,36 @@ namespace HKTelemetry.Recorders
                 if (!KilledThisVisit.Add(iid)) return; // ya emitido por HealthManager.Die
                 var e = Track(hm);
                 var pos = go.transform.position;
-                SessionManager.Emit("enemy_killed", new Json()
-                    .Raw("enemy", e.Json).I("hp_max", e.HpMax).B("special", true)
+                SessionManager.Emit("enemy_killed", Json.Obj()
+                    .Raw("enemy", e.Block).I("hp_max", e.HpMax).B("special", true)
                     .N("x", pos.x).N("y", pos.y).End());
-            });
+            }
+            catch (Exception ex) { Safe.Report("combat.killed_special", ex); }
+            finally { Safe.Exit(t); }
         }
 
         private static bool OnEnableEnemy(GameObject enemy, bool isAlreadyDead)
         {
-            Safe.Run("combat.spawn", () =>
+            long t = Safe.Enter();
+            try
             {
-                if (!SessionManager.Active || enemy == null) return;
-                var hm = enemy.GetComponent<HealthManager>();
-                if (hm == null) return;
-                KilledThisVisit.Remove(enemy.GetInstanceID()); // enemigo reciclado: puede volver a morir
-                var e = Track(hm);
-                e.LastHp = hm.hp;
-                var pos = enemy.transform.position;
-                SessionManager.Emit("enemy_spawn", new Json()
-                    .Raw("enemy", e.Json).I("hp", hm.hp).B("already_dead", isAlreadyDead)
-                    .N("x", pos.x).N("y", pos.y).End());
-            });
+                if (SessionManager.Active && enemy != null)
+                {
+                    var hm = enemy.GetComponent<HealthManager>();
+                    if (hm != null)
+                    {
+                        KilledThisVisit.Remove(enemy.GetInstanceID()); // enemigo reciclado: puede volver a morir
+                        var e = Track(hm);
+                        e.LastHp = hm.hp;
+                        var pos = enemy.transform.position;
+                        SessionManager.Emit("enemy_spawn", Json.Obj()
+                            .Raw("enemy", e.Block).I("hp", hm.hp).B("already_dead", isAlreadyDead)
+                            .N("x", pos.x).N("y", pos.y).End());
+                    }
+                }
+            }
+            catch (Exception ex) { Safe.Report("combat.spawn", ex); }
+            finally { Safe.Exit(t); }
             return isAlreadyDead; // pass-through obligatorio
         }
 
@@ -376,20 +496,21 @@ namespace HKTelemetry.Recorders
                 int hp = e.Hm.hp;
                 if (hp == e.LastHp) continue;
                 if (hp > e.HpMax) e.HpMax = hp;
-                SessionManager.Emit("enemy_hp_change", new Json()
-                    .Raw("enemy", e.Json).I("hp_before", e.LastHp).I("hp_after", hp).End());
+                var jh = SessionManager.EmitBegin("enemy_hp_change");
+                if (jh != null) SessionManager.EmitEnd(jh.Raw("enemy", e.Block).I("hp_before", e.LastHp).I("hp_after", hp));
                 e.LastHp = hp;
             }
-            foreach (int k in DeadKeys) Enemies.Remove(k);
+            for (int i = 0; i < DeadKeys.Count; i++) Enemies.Remove(DeadKeys[i]);
 
-            // Estado del FSM "Spell Control": hechizos, focus y nail arts se reconstruyen en Python.
+            // Estado del FSM "Spell Control" al final del frame: hechizos, focus y nail arts se
+            // reconstruyen en Python. Los estados que entran y salen en el mismo frame no se ven.
             if (hc != null && hc.spellControl != null)
             {
                 string state = hc.spellControl.ActiveStateName;
-                if (state != _lastSpellState)
+                if (!ReferenceEquals(state, _lastSpellState) && state != _lastSpellState)
                 {
-                    SessionManager.Emit("fsm_state", new Json()
-                        .S("fsm", "Spell Control").S("from", _lastSpellState).S("to", state).End());
+                    var jf = SessionManager.EmitBegin("fsm_state");
+                    if (jf != null) SessionManager.EmitEnd(jf.S("fsm", "Spell Control").S("from", _lastSpellState).S("to", state));
                     _lastSpellState = state;
                 }
             }
@@ -412,17 +533,17 @@ namespace HKTelemetry.Recorders
                             Json.AppendString(names, boss.bosses[i] != null ? boss.bosses[i].name : "");
                         }
                     names.Append(']');
-                    SessionManager.Emit("boss_scene", new Json().S("phase", "start").I("boss_level", boss.BossLevel)
+                    SessionManager.Emit("boss_scene", Json.Obj().S("phase", "start").I("boss_level", boss.BossLevel)
                         .Raw("bosses", names.ToString()).End());
                 }
             }
         }
 
         private static void OnBossesDead() => Safe.Run("combat.boss_dead", () =>
-            SessionManager.Emit("boss_scene", new Json().S("phase", "bosses_dead").I("boss_level", BossLevel()).End()));
+            SessionManager.Emit("boss_scene", Json.Obj().S("phase", "bosses_dead").I("boss_level", BossLevel()).End()));
 
         private static void OnBossSceneComplete() => Safe.Run("combat.boss_complete", () =>
-            SessionManager.Emit("boss_scene", new Json().S("phase", "complete").I("boss_level", BossLevel()).End()));
+            SessionManager.Emit("boss_scene", Json.Obj().S("phase", "complete").I("boss_level", BossLevel()).End()));
 
         private static int BossLevel()
         {

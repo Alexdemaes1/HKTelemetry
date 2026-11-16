@@ -26,10 +26,14 @@ Verificación de la API contra el código, con referencias `archivo:línea`: [ap
 | Fase | Estado |
 |---|---|
 | 0 | ✅ cerrada |
-| 1 | 🟡 código hecho y probado en 2 sesiones. Corregidos: Dream Gate, ciervo (`LoadLevel`), puertas FSM, `control_ready` temprano. **Falta confirmarlo en el juego con la DLL nueva** |
-| 2–8 | ⏳ pendientes |
+| 1 | ✅ probada en 3 sesiones (escenas, puertas FSM, ciervo, Dream Gate, partida nueva) |
+| 2 | 🟡 código hecho y probado en 1 sesión (Falso Caballero, Chamán); revisión adversarial aplicada |
+| 3 | 🟡 código hecho y probado en 1 sesión (`boss_defeated`, `ability_gained`, `item_got`) |
+| Mapa (nuevo, schema v2) | 🟡 código hecho, **sin probar en el juego** |
+| 7 (HUD) | 🟡 adelantada: punto, línea de título y overlay de debug, **sin probar en el juego** |
+| 4, 5, 6, 8 | ⏳ pendientes |
 
-**Abierto:** input lag percibido. El juego va a ~178 fps con vsync a 180 Hz. El evento `perf` mide el coste del mod por frame; falta una sesión con la DLL nueva para tener el número.
+**Abierto:** input lag percibido. Primera medida (v1, solo el Runner): ~42 µs/frame de media y picos de ~3 ms cada 15–60 s, probablemente pausas del recolector de basura. En v2 se han quitado las fuentes de basura detectadas y `perf` mide ya todo el tiempo del mod (hooks incluidos): falta una sesión para confirmarlo.
 
 ### Perfilado de jugadores (agresivo / pasivo / explorador…)
 

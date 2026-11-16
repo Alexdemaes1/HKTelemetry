@@ -30,7 +30,7 @@ namespace HKTelemetry.Recorders
 
         private static bool _hooked, _seeded;
         private static bool[] _b; private static int[] _i; private static float[] _f; private static string[] _s; private static Vector3[] _v;
-        private static List<string>[] _lists;
+        private static object[] _listSnap; // copia tipada de cada lista (List<string>/List<int>/List<Vector3>)
         private static int _cursor;
         private static float _lastListCheck;
         private static int[] _rlSecond, _rlCount;
@@ -44,11 +44,11 @@ namespace HKTelemetry.Recorders
             if (_hooked) return;
             _hooked = true;
             System.Threading.ThreadPool.QueueUserWorkItem(_ => Safe.Run("pd.table", PdTable.Build));
+            // Solo bool, int y tipos no primitivos. Cada hook suscrito hace que la API cree un array en
+            // CADA escritura de ese tipo (GetInvocationList, ModHooks.cs:632): float/string/Vector3 son
+            // raras y el barrido las detecta en una fracción de segundo (src = "diff").
             ModHooks.SetPlayerBoolHook += OnSetBool;
             ModHooks.SetPlayerIntHook += OnSetInt;
-            ModHooks.SetPlayerFloatHook += OnSetFloat;
-            ModHooks.SetPlayerStringHook += OnSetString;
-            ModHooks.SetPlayerVector3Hook += OnSetVector3;
             ModHooks.SetPlayerVariableHook += OnSetVariable;
         }
 
@@ -101,8 +101,8 @@ namespace HKTelemetry.Recorders
             for (int k = 0; k < _s.Length; k++) _s[k] = PdTable.StrGet[k](pd);
             _v = new Vector3[PdTable.V3Get.Length];
             for (int k = 0; k < _v.Length; k++) _v[k] = PdTable.V3Get[k](pd);
-            _lists = new List<string>[PdTable.Lists.Length];
-            for (int k = 0; k < _lists.Length; k++) _lists[k] = PdTable.ListAsStrings(PdTable.Lists[k].Fi.GetValue(pd));
+            _listSnap = new object[PdTable.Lists.Length];
+            for (int k = 0; k < _listSnap.Length; k++) _listSnap[k] = CopyList(PdTable.Lists[k].Fi.GetValue(pd));
             _rlSecond = new int[PdTable.Count];
             _rlCount = new int[PdTable.Count];
             _cursor = 0;
@@ -124,17 +124,19 @@ namespace HKTelemetry.Recorders
                 catch (Exception e) { doc[x.Name] = "<error: " + e.GetType().Name + ">"; }
             }
 
-            string json = JsonConvert.SerializeObject(new Dictionary<string, object>
+            var root = new Dictionary<string, object>
             {
                 ["schema_version"] = HKTelemetry.SchemaVersion,
                 ["session_id"] = SessionManager.SessionId,
                 ["t_game"] = Clock.TGame,
                 ["fields"] = doc,
-            });
+            };
             var w = SessionManager.Writer;
             string path = Path.Combine(w.Dir, fileName);
+            // Serializar ~1500 campos genera cientos de KB: en el hilo de escritura, no en el del juego.
             w.Job(() =>
             {
+                string json = JsonConvert.SerializeObject(root);
                 string tmp = path + ".tmp";
                 using (var fs = new FileStream(tmp, FileMode.Create, FileAccess.Write))
                 using (var gz = new GZipStream(fs, CompressionMode.Compress))
@@ -151,6 +153,7 @@ namespace HKTelemetry.Recorders
 
         private static bool OnSetBool(string name, bool value)
         {
+            long t = Safe.Enter();
             try
             {
                 if (Live && Lookup(name, PdTable.Kind.Bool, out var f))
@@ -161,11 +164,13 @@ namespace HKTelemetry.Recorders
                 }
             }
             catch (Exception e) { Safe.Report("pd.set_bool", e); }
+            finally { Safe.Exit(t); }
             return value;
         }
 
         private static int OnSetInt(string name, int value)
         {
+            long t = Safe.Enter();
             try
             {
                 if (Live && Lookup(name, PdTable.Kind.Int, out var f))
@@ -176,57 +181,17 @@ namespace HKTelemetry.Recorders
                 }
             }
             catch (Exception e) { Safe.Report("pd.set_int", e); }
+            finally { Safe.Exit(t); }
             return value;
         }
 
-        private static float OnSetFloat(string name, float value)
-        {
-            try
-            {
-                if (Live && Lookup(name, PdTable.Kind.Float, out var f))
-                {
-                    float old = PdTable.FloatGet[f.Idx](PlayerData.instance);
-                    _f[f.Idx] = value;
-                    if (!old.Equals(value)) ChangeFloat(f, old, value, "hook");
-                }
-            }
-            catch (Exception e) { Safe.Report("pd.set_float", e); }
-            return value;
-        }
 
-        private static string OnSetString(string name, string value)
-        {
-            try
-            {
-                if (Live && Lookup(name, PdTable.Kind.Str, out var f))
-                {
-                    string old = PdTable.StrGet[f.Idx](PlayerData.instance);
-                    _s[f.Idx] = value;
-                    if (!string.Equals(old, value, StringComparison.Ordinal)) ChangeString(f, old, value, "hook");
-                }
-            }
-            catch (Exception e) { Safe.Report("pd.set_string", e); }
-            return value;
-        }
 
-        private static Vector3 OnSetVector3(string name, Vector3 value)
-        {
-            try
-            {
-                if (Live && Lookup(name, PdTable.Kind.V3, out var f))
-                {
-                    Vector3 old = PdTable.V3Get[f.Idx](PlayerData.instance);
-                    _v[f.Idx] = value;
-                    if (old != value) ChangeV3(f, old, value, "hook");
-                }
-            }
-            catch (Exception e) { Safe.Report("pd.set_v3", e); }
-            return value;
-        }
 
         /// <summary>Tipos no primitivos (enums como MapZone, structs de Godhome, listas reemplazadas). Raro.</summary>
         private static object OnSetVariable(Type type, string name, object value)
         {
+            long t = Safe.Enter();
             try
             {
                 if (Live && PdTable.ByName.TryGetValue(name, out var f))
@@ -241,13 +206,14 @@ namespace HKTelemetry.Recorders
                         string oldJson = VarJson(f.Fi.GetValue(pd));
                         string newJson = VarJson(value);
                         if (oldJson != newJson && Allow(f))
-                            SessionManager.Emit("pd_change", new Json().S("f", f.Name).S("t", "var")
+                            SessionManager.Emit("pd_change", Json.Obj().S("f", f.Name).S("t", "var")
                                 .Raw("old", oldJson).Raw("new", newJson).S("src", "hook").End());
                     }
                 }
                 else if (Live) NoteUnknown(name);
             }
             catch (Exception e) { Safe.Report("pd.set_var", e); }
+            finally { Safe.Exit(t); }
             return value;
         }
 
@@ -351,13 +317,20 @@ namespace HKTelemetry.Recorders
             }
         }
 
+        /// <summary>
+        /// Compara la lista actual con la copia guardada SIN generar basura (se ejecuta cada segundo):
+        /// elemento a elemento con el tipo real. Solo si cambia se copia y se calcula el diff en texto.
+        /// (Antes se convertían las 15 listas a strings cada segundo: basura → pausas del GC de ~3 ms.)
+        /// </summary>
         private static void CheckList(int k, object value)
         {
+            if (ListUnchanged(_listSnap[k], value)) return;
+            var prevSnap = _listSnap[k];
+            _listSnap[k] = CopyList(value);
+            if (prevSnap == null) return;
+
             var cur = PdTable.ListAsStrings(value);
-            var prev = _lists[k];
-            if (prev != null && prev.Count == cur.Count && SameOrder(prev, cur)) return;
-            _lists[k] = cur;
-            if (prev == null) return;
+            var prev = PdTable.ListAsStrings(prevSnap);
 
             var added = new List<string>(cur);
             foreach (var x in prev) added.Remove(x);
@@ -366,19 +339,50 @@ namespace HKTelemetry.Recorders
             if (added.Count == 0 && removed.Count == 0) return; // solo reordenada
 
             var f = PdTable.Lists[k];
-            SessionManager.Emit("pd_list", new Json().S("f", f.Name)
+            SessionManager.Emit("pd_list", Json.Obj().S("f", f.Name)
                 .Raw("added", JsonConvert.SerializeObject(added))
                 .Raw("removed", JsonConvert.SerializeObject(removed))
                 .I("count", cur.Count).End());
         }
 
-        private static bool SameOrder(List<string> a, List<string> b)
+        private static bool ListUnchanged(object prev, object cur)
         {
-            for (int k = 0; k < a.Count; k++) if (!string.Equals(a[k], b[k], StringComparison.Ordinal)) return false;
+            if (prev == null) return cur == null;
+            switch (cur)
+            {
+                case List<string> c: return prev is List<string> ps && Same(ps, c);
+                case List<int> c: return prev is List<int> pi && Same(pi, c);
+                case List<Vector3> c: return prev is List<Vector3> pv && Same(pv, c);
+                case null: return false;
+                default: return false; // PlayerData solo tiene listas de esos tres tipos (verificado)
+            }
+        }
+
+        private static bool Same<T>(List<T> a, List<T> b)
+        {
+            if (a.Count != b.Count) return false;
+            var eq = EqualityComparer<T>.Default; // string/int/Vector3 implementan IEquatable: sin boxing
+            for (int k = 0; k < a.Count; k++) if (!eq.Equals(a[k], b[k])) return false;
             return true;
         }
 
+        private static object CopyList(object cur)
+        {
+            switch (cur)
+            {
+                case List<string> c: return new List<string>(c);
+                case List<int> c: return new List<int>(c);
+                case List<Vector3> c: return new List<Vector3>(c);
+                case null: return null;
+                default: return PdTable.ListAsStrings(cur);
+            }
+        }
+
         // ---------------- emisión + límite por campo ----------------
+
+        /// <summary>Sobre de pd_change sin cadena intermedia (Change* solo se llama con sesión activa).</summary>
+        private static Json Pd(PdTable.Field f, string t) =>
+            SessionManager.EmitBegin("pd_change")?.S("f", f.Name).S("t", t) ?? Json.Obj();
 
         private static bool Allow(PdTable.Field f)
         {
@@ -397,33 +401,33 @@ namespace HKTelemetry.Recorders
         private static void ChangeBool(PdTable.Field f, bool o, bool n, string src)
         {
             if (Allow(f))
-                SessionManager.Emit("pd_change", new Json().S("f", f.Name).S("t", "b").B("old", o).B("new", n).S("src", src).End());
+                SessionManager.EmitEnd(Pd(f, "b").B("old", o).B("new", n).S("src", src));
             if (!o && n) Derived.OnBoolTrue(f.Name);
         }
 
         private static void ChangeInt(PdTable.Field f, int o, int n, string src)
         {
             if (Allow(f))
-                SessionManager.Emit("pd_change", new Json().S("f", f.Name).S("t", "i").I("old", o).I("new", n).S("src", src).End());
+                SessionManager.EmitEnd(Pd(f, "i").I("old", o).I("new", n).S("src", src));
             if (n > o) Derived.OnIntUp(f.Name, o, n);
         }
 
         private static void ChangeFloat(PdTable.Field f, float o, float n, string src)
         {
             if (Allow(f))
-                SessionManager.Emit("pd_change", new Json().S("f", f.Name).S("t", "f").N("old", o).N("new", n).S("src", src).End());
+                SessionManager.EmitEnd(Pd(f, "f").N("old", o).N("new", n).S("src", src));
         }
 
         private static void ChangeString(PdTable.Field f, string o, string n, string src)
         {
             if (Allow(f))
-                SessionManager.Emit("pd_change", new Json().S("f", f.Name).S("t", "s").S("old", o).S("new", n).S("src", src).End());
+                SessionManager.EmitEnd(Pd(f, "s").S("old", o).S("new", n).S("src", src));
         }
 
         private static void ChangeV3(PdTable.Field f, Vector3 o, Vector3 n, string src)
         {
             if (Allow(f))
-                SessionManager.Emit("pd_change", new Json().S("f", f.Name).S("t", "v3")
+                SessionManager.Emit("pd_change", Json.Obj().S("f", f.Name).S("t", "v3")
                     .Raw("old", PdTable.FormatV3(o)).Raw("new", PdTable.FormatV3(n)).S("src", src).End());
         }
 
@@ -482,23 +486,23 @@ namespace HKTelemetry.Recorders
             public static void OnBoolTrue(string name)
             {
                 if (name.StartsWith("killed", StringComparison.Ordinal) && BossJournal.Contains(name.Substring(6)))
-                    Emit("boss_defeated", new Json().S("field", name).S("boss", name.Substring(6)).End());
+                    Emit("boss_defeated", Json.Obj().S("field", name).S("boss", name.Substring(6)).End());
                 else if (BossFlags.Contains(name))
-                    Emit("boss_defeated", new Json().S("field", name).S("boss", name).End());
+                    Emit("boss_defeated", Json.Obj().S("field", name).S("boss", name).End());
                 else if (AbilityBools.Contains(name))
-                    Emit("ability_gained", new Json().S("field", name).I("old", 0).I("new", 1).End());
+                    Emit("ability_gained", Json.Obj().S("field", name).I("old", 0).I("new", 1).End());
                 else if (name.StartsWith("gotCharm_", StringComparison.Ordinal))
-                    Emit("item_got", new Json().S("field", name).S("kind", "charm").I("old", 0).I("new", 1).End());
+                    Emit("item_got", Json.Obj().S("field", name).S("kind", "charm").I("old", 0).I("new", 1).End());
                 else if (ItemBools.TryGetValue(name, out var kind))
-                    Emit("item_got", new Json().S("field", name).S("kind", kind).I("old", 0).I("new", 1).End());
+                    Emit("item_got", Json.Obj().S("field", name).S("kind", kind).I("old", 0).I("new", 1).End());
             }
 
             public static void OnIntUp(string name, int o, int n)
             {
                 if (AbilityInts.Contains(name))
-                    Emit("ability_gained", new Json().S("field", name).I("old", o).I("new", n).End());
+                    Emit("ability_gained", Json.Obj().S("field", name).I("old", o).I("new", n).End());
                 else if (ItemInts.TryGetValue(name, out var kind))
-                    Emit("item_got", new Json().S("field", name).S("kind", kind).I("old", o).I("new", n).End());
+                    Emit("item_got", Json.Obj().S("field", name).S("kind", kind).I("old", o).I("new", n).End());
             }
 
             private static void Emit(string type, string payload)

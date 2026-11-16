@@ -39,6 +39,7 @@ namespace HKTelemetry.Writing
             public StreamWriter Writer;
             public long Lines;
             public long Dropped;
+            public long Bytes;   // tamaño del fichero plano, actualizado en el hilo de escritura
         }
 
         private readonly Dictionary<string, Sink> _sinks = new Dictionary<string, Sink>();
@@ -67,6 +68,9 @@ namespace HKTelemetry.Writing
         }
 
         public long Lines(string sink) => _sinks.TryGetValue(sink, out var s) ? Interlocked.Read(ref s.Lines) : 0;
+        /// <summary>Bytes escritos en el fichero plano (sin leer el disco desde el hilo del juego).</summary>
+        public long Bytes(string sink) => _sinks.TryGetValue(sink, out var s) ? Interlocked.Read(ref s.Bytes) : 0;
+
         public long Dropped(string sink) => _sinks.TryGetValue(sink, out var s) ? Interlocked.Read(ref s.Dropped) : 0;
 
         public long TotalDropped()
@@ -146,6 +150,7 @@ namespace HKTelemetry.Writing
                         Interlocked.Increment(ref s.Lines);
                     }
                     s.Writer.Flush();
+                    Interlocked.Exchange(ref s.Bytes, s.Writer.BaseStream.Length);
                 }
                 catch (Exception e)
                 {

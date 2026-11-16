@@ -49,6 +49,9 @@ namespace HKTelemetry.Session
         public static string SessionId => _s?.Id;
         public static string Kind => _s?.Kind;
         public static TelemetryWriter Writer => _s?.Writer;
+        /// <summary>Tipo del último evento emitido (overlay de debug).</summary>
+        public static volatile string LastType;
+
         public static long EventCount => _s != null ? Interlocked.Read(ref _s.Seq) : 0;
 
         /// <summary>Desde Initialize (hilo principal).</summary>
@@ -89,19 +92,20 @@ namespace HKTelemetry.Session
                 {
                     (TelemetryWriter.Events, (string)null, 500_000),
                 }),
-                Experience = new Experience(),
             };
             _s = s;
 
             var gm = GameManager.UnsafeInstance;
             s.Game = Safe.Run("session.game", GameInfo, null);
             s.Display = Safe.Run("session.display", DisplayInfo, null);
-            Safe.Run("session.experience", () => s.Experience.Collect(gm));
+            // Una vez por arranque: leer y descifrar los saves bloquea el hilo principal (DesktopPlatform.cs:183).
+            s.Experience = Safe.Run("session.experience", () => Experience.ForLaunch(gm), null) ?? new Experience();
 
             SceneRecorder.OnSessionStart();
             CombatRecorder.OnSessionStart();
             PlayerDataRecorder.OnSessionStart();
-            Emit("session_start", new Json().S("kind", kind).I("slot", slot).S("launch_id", LaunchId).End());
+            MapRecorder.OnSessionStart();
+            Emit("session_start", Json.Obj().S("kind", kind).I("slot", slot).S("launch_id", LaunchId).End());
             WriteSessionJson();
 
             string savePath = Path.Combine(Application.persistentDataPath, slot == 0 ? "user.dat" : $"user{slot}.dat");
@@ -139,8 +143,14 @@ namespace HKTelemetry.Session
         {
             var s = _s;
             if (s == null) return;
-            if (s.ProgressEnd == null) Safe.Run("session.progress_end", TakeProgressEnd);
-            Emit("session_end", new Json().S("reason", reason).End());
+            // La foto final se toma tras el guardado de «Guardar y salir». En cualquier otro final
+            // (cierre del juego, Steel Soul, nueva sesión) se vuelve a tomar: una salida cancelada
+            // podría haber dejado una foto antigua. En el menú de emergencia se conserva la que haya,
+            // porque QuitToMenu puede haber reiniciado ya PlayerData.
+            bool retake = reason == "app_quit" || reason == "permadeath" || reason == "restarted";
+            if (s.ProgressEnd == null || retake) Safe.Run("session.progress_end", TakeProgressEnd);
+            Safe.Run("session.map_close", () => Recorders.MapRecorder.ForceClose("session_end"));
+            Emit("session_end", Json.Obj().S("reason", reason).End());
             s.EndReason = reason;
             s.EndUtc = DateTime.UtcNow;
             s.EndTGame = Clock.TGame;
@@ -156,23 +166,50 @@ namespace HKTelemetry.Session
         /// </summary>
         public static void Emit(string type, string payload)
         {
+            var j = BeginLine(type);
+            if (j == null) return;
+            EndLine(j.Raw("p", payload ?? "{}"));
+        }
+
+        /// <summary>
+        /// Variante sin cadena intermedia para eventos frecuentes: abre el sobre y el objeto "p" y
+        /// devuelve el constructor para añadir los campos; cerrar con EmitEnd. Devuelve null sin sesión.
+        /// Uso: var j = SessionManager.EmitBegin("x"); if (j != null) SessionManager.EmitEnd(j.I("a", 1));
+        /// IMPORTANTE: calcular todos los valores ANTES de EmitBegin (el seq ya está asignado: si algo
+        /// lanzara entre medias quedaría un hueco en seq).
+        /// </summary>
+        public static Json EmitBegin(string type)
+        {
+            var j = BeginLine(type);
+            return j?.Obj("p");
+        }
+
+        public static void EmitEnd(Json j) => EndLine(j.Close());
+
+        private static Json BeginLine(string type)
+        {
             var s = _s;
-            if (s == null) return;
+            if (s == null) return null;
+            LastType = type;
             var gm = GameManager.UnsafeInstance;
             bool hasGm = gm != null;
             long seq = Interlocked.Increment(ref s.Seq) - 1;
-            string line = new Json()
+            return Json.Obj()
                 .I("seq", seq)
                 .N("t_game", Clock.TGame)
                 .N("t_real", Clock.TReal)
                 .I("frame", Clock.Frame)
                 .N("play_time", hasGm ? gm.PlayTime : double.NaN)
                 .S("scene", SceneRecorder.CurrentScene)
-                .S("gs", hasGm ? gm.gameState.ToString() : null)
-                .S("type", type)
-                .Raw("p", payload ?? "{}")
-                .End();
-            s.Writer.Enqueue(TelemetryWriter.Events, line);
+                .S("gs", hasGm ? EnumNames<GlobalEnums.GameState>.Of((int)gm.gameState) : null)
+                .S("type", type);
+        }
+
+        private static void EndLine(Json j)
+        {
+            string line = j.End();
+            var s = _s;
+            if (s != null) s.Writer.Enqueue(TelemetryWriter.Events, line);
         }
 
         /// <summary>Construye session.json en el hilo principal y lo escribe de forma atómica en el writer.</summary>
@@ -228,9 +265,10 @@ namespace HKTelemetry.Session
                 };
                 var counters = (Dictionary<string, object>)doc["counters"];
                 foreach (var kv in PlayerDataRecorder.Counters()) counters[kv.Key] = kv.Value;
-                string text = JsonConvert.SerializeObject(doc, Formatting.Indented);
                 string path = Path.Combine(s.Dir, "session.json");
-                w.Job(() => TelemetryWriter.WriteAtomic(path, text));
+                // La serialización (decenas de KB de basura) va al hilo de escritura: el diccionario
+                // solo contiene copias, nadie lo modifica después.
+                w.Job(() => TelemetryWriter.WriteAtomic(path, JsonConvert.SerializeObject(doc, Formatting.Indented)));
             });
         }
 
