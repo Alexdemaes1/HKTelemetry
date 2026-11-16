@@ -123,7 +123,7 @@ Una línea JSON por evento:
 | `session_end` | `reason` | `On.GameManager.ReturnToMainMenu` (al llamarse), `ApplicationQuitHook`, `LoadScene("PermaDeath")`, cambio a `Quit_To_Menu` sin pasar por `ReturnToMainMenu` (`EmergencyReturnToMenu`) |
 | `scene_exit` | `from, to, reason, exit_gate, entry_gate, vis, info_type, prevent_fade, first_level, respawning` | `On.GameManager.BeginSceneTransition` (antes de `orig`), además de `On.GameManager.LoadScene` y `ReturnToMainMenu` para los caminos que no usan `BeginSceneTransition` |
 | `scene_enter` | `scene, entry_gate, map_zone, scene_type, load_s` | `On.GameManager.OnNextLevelReady` (después de `orig`; se deduplica por escena). Es el único punto que alcanzan los tres caminos de carga. `load_s` sale de `SceneLoad.GetDuration` (vía `GameManager.SceneTransitionBegan`) |
-| `control_ready` | `scene` | primer `On.GameManager.FinishedEnteringScene` tras `scene_enter`. Marca cuándo el héroe acepta input. Los que llegan por *hazard respawn* se ignoran |
+| `control_ready` | `scene, early` | primer `On.GameManager.FinishedEnteringScene` tras `scene_exit`. Marca cuándo el héroe acepta input. En Dream Gate y en el respawn tras morir el juego lo llama **antes** de `OnNextLevelReady`: se emite justo después de `scene_enter` con `early: true`. Los que llegan por *hazard respawn* se ignoran |
 | `game_state` | `from, to, paused` | sondeo de `gameState` cada frame. `pause`/`unpause` son transiciones hacia o desde `PAUSED` **[derivado]** |
 
 > `ModHooks.SceneChanged` **no se usa**: no salta en puertas, muertes, cargas, ciervos ni
@@ -139,8 +139,9 @@ recalcular en Python si el clasificador se equivoca:
 | 2 | `info.IsFirstLevelForPlayer` y `Visualization == ContinueFromSave` | `save_load` (o `new_game_godseeker` si la sesión empezó así) |
 | 3 | `info.SceneName == "Opening_Sequence"` | `new_game` |
 | 4 | `SceneName == "Cinematic_Stag_travel"` o `EntryGateName == "door_stagExit"` | `stag` |
+| 4b | `EntryGateName == "dreamGate"` (Dream Gate, `GameManager.WarpToDreamGate`; también sirve para salir de Godhome) | `dream_gate` |
 | 5 | `Visualization == GodsAndGlory`, o la escena de origen o destino empieza por `GG_` | `godhome` |
-| 6 | `EntryGateName ∈ {dreamGate, door_dreamReturn}`, `Visualization ∈ {Dream, GrimmDream}` o el destino empieza por `Dream_` | `dream` |
+| 6 | `EntryGateName == door_dreamReturn`, `Visualization ∈ {Dream, GrimmDream}` o el destino empieza por `Dream_` | `dream` |
 | 7 | flag puesto en `On.TransitionPoint.OnTriggerEnter2D` en este mismo frame | `gate`, con `exit_gate = TransitionPoint.lastEntered` |
 | 8 | existe un `TransitionPoint` en la escena activa con `targetScene == info.SceneName` y `entryPoint == info.EntryGateName` | `door` (puertas por FSM), con `exit_gate =` su nombre |
 | 9 | ninguna de las anteriores | `other` (se loguea una vez para revisarlo) |
@@ -225,7 +226,7 @@ los objetos que se desactivan solos se guardan.
 | `type` | Payload `p` | Fuente |
 |---|---|---|
 | `device` | `from, to` | sondeo de `inputActions.LastInputType` (`KeyBindingSource`/`MouseBindingSource` = teclado, `DeviceBindingSource` = mando) |
-| `perf` | `fps_avg, fps_min, dt_max_ms, q_events, q_frames` | cada 1 s de tiempo real |
+| `perf` | `fps, dt_max_ms, mod_us_avg, mod_us_max, vsync, target_fps, dropped` | cada 1 s de tiempo real, desde el `Runner`. `mod_us_*` = tiempo del `Update` del mod por frame (µs): sirve para descartar que el mod cause tirones o input lag |
 | `writer` | `status` (`ok`/`error`/`dropping`), `msg` | hilo de escritura |
 
 ## 5. `frames.csv`

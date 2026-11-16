@@ -75,9 +75,12 @@ namespace HKTelemetry.Session
         private void CollectSaves(GameManager gm)
         {
             if (gm == null) return;
+            string dir = Application.persistentDataPath;
             for (int slot = 1; slot <= 4; slot++)
             {
                 int s = slot;
+                // Solo slots con fichero: si no, el juego lanza y registra FileNotFoundException en Player.log.
+                if (!File.Exists(Path.Combine(dir, $"user{s}.dat"))) continue;
                 gm.GetSaveStatsForSlot(s, stats => Safe.Run("experience.saves.cb", () =>
                 {
                     if (stats == null) return;

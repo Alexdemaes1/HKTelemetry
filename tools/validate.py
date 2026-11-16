@@ -23,7 +23,7 @@ DEFAULT_ROOT = Path(os.environ.get("USERPROFILE", "~")).expanduser() / "AppData/
 
 COMMON_FIELDS = ("seq", "t_game", "t_real", "frame", "scene", "type", "p")
 EXIT_REASONS = {
-    "death", "death_dream", "death_godhome", "save_load", "new_game", "new_game_godseeker", "stag",
+    "death", "death_dream", "death_godhome", "save_load", "new_game", "new_game_godseeker", "stag", "dream_gate",
     "godhome", "dream", "gate", "door", "other", "quit_menu", "ending", "permadeath", "cutscene",
 }
 END_REASONS = {"quit_menu", "ending", "menu", "emergency_menu", "permadeath", "app_quit", "restarted", "recovered"}
@@ -169,6 +169,23 @@ def check_events(folder: Path, s: dict | None, r: Report) -> None:
         r.warn(f"counters.events={s['counters']['events']} pero hay {len(events)} líneas")
 
     check_scene_sequence(events, r)
+    summarize_perf(events, r)
+
+
+def summarize_perf(events: list[dict], r: Report) -> None:
+    perf = [e["p"] for e in events if e["type"] == "perf"]
+    if not perf:
+        return
+    fps = sorted(p["fps"] for p in perf)
+    mod_avg = sum(p["mod_us_avg"] for p in perf) / len(perf)
+    mod_max = max(p["mod_us_max"] for p in perf)
+    dt_max = max(p["dt_max_ms"] for p in perf)
+    r.info.append(
+        f"perf: fps mediana={fps[len(fps)//2]:.0f} min={fps[0]:.0f} | frame mas largo={dt_max:.0f} ms | "
+        f"coste del mod: media={mod_avg:.1f} us/frame, max={mod_max:.0f} us"
+    )
+    if mod_avg > 200:
+        r.warn(f"el mod gasta {mod_avg:.0f} us/frame de media (objetivo < 200 us)")
 
 
 def is_non_gameplay(scene: str | None) -> bool:
@@ -200,6 +217,8 @@ def check_scene_sequence(events: list[dict], r: Report) -> None:
                 r.warn(f"seq={e['seq']} scene_exit sin scene_enter del anterior (seq={pending_exit['seq']})")
             if p.get("from") != current:
                 r.warn(f"seq={e['seq']} scene_exit.from={p.get('from')} pero la escena actual es {current}")
+            if awaiting_control is not None and p.get("reason") not in ("quit_menu", "ending"):
+                r.warn(f"scene_enter seq={awaiting_control['seq']} ({awaiting_control['p'].get('scene')}) sin control_ready")
             pending_exit = e
             awaiting_control = None
         elif t == "scene_enter":

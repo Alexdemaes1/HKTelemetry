@@ -28,6 +28,7 @@ namespace HKTelemetry.Recorders
         private static bool _hooked;
         private static bool _pendingTransition;     // hubo scene_exit y falta su scene_enter
         private static bool _awaitingControl;       // hubo scene_enter y falta control_ready
+        private static bool _earlyControl;          // FinishedEnteringScene llegó antes que scene_enter (Dream Gate, respawn)
         private static double _exitTReal;
         private static string _pendingDeathZone;    // puesto en HeroController.Die; lo consume el siguiente scene_exit
         private static int _gateTriggerFrame = -1;  // frame en que TransitionPoint.OnTriggerEnter2D disparó
@@ -59,6 +60,7 @@ namespace HKTelemetry.Recorders
             CurrentScene = BaseName(USM.GetActiveScene().name);
             _pendingTransition = false;
             _awaitingControl = false;
+            _earlyControl = false;
             _pendingDeathZone = null;
             _quitReason = null;
             _lastState = null;
@@ -180,12 +182,17 @@ namespace HKTelemetry.Recorders
             {
                 reason = "stag";
             }
+            else if (info.EntryGateName == "dreamGate")
+            {
+                // GameManager.WarpToDreamGate (GameManager.cs:669-676). Antes que godhome: también se usa para salir de Godhome.
+                reason = "dream_gate";
+            }
             else if (vis == GameManager.SceneLoadVisualizations.GodsAndGlory
                      || StartsWith(CurrentScene, "GG_") || StartsWith(to, "GG_"))
             {
                 reason = "godhome";
             }
-            else if (info.EntryGateName == "dreamGate" || info.EntryGateName == "door_dreamReturn"
+            else if (info.EntryGateName == "door_dreamReturn"
                      || vis == GameManager.SceneLoadVisualizations.Dream
                      || vis == GameManager.SceneLoadVisualizations.GrimmDream
                      || StartsWith(to, "Dream_"))
@@ -244,6 +251,7 @@ namespace HKTelemetry.Recorders
         {
             _pendingTransition = true;
             _awaitingControl = false;
+            _earlyControl = false;
             _exitTReal = Clock.TReal;
         }
 
@@ -276,6 +284,14 @@ namespace HKTelemetry.Recorders
                     .End());
                 _pendingTransition = false;
                 _awaitingControl = true;
+
+                // En Dream Gate y en el respawn tras morir, el juego da el control (EnterHero →
+                // FinishedEnteringScene) antes de OnNextLevelReady: se emite ahora, marcado como early.
+                if (_earlyControl)
+                {
+                    _earlyControl = false;
+                    EmitControlReady(early: true);
+                }
             });
         }
 
@@ -284,11 +300,18 @@ namespace HKTelemetry.Recorders
             orig(self);
             Safe.Run("scene.control", () =>
             {
-                if (!SessionManager.Active || !_awaitingControl) return;
-                _awaitingControl = false; // los siguientes (hazard respawn, doble llamada de EnterHero) se ignoran
-                SessionManager.Emit("control_ready", new Json().S("scene", CurrentScene).End());
-                SessionManager.TakeProgressStartIfNeeded();
+                if (!SessionManager.Active) return;
+                if (_pendingTransition) { _earlyControl = true; return; } // aún no ha llegado scene_enter
+                if (!_awaitingControl) return; // los siguientes (hazard respawn, doble llamada de EnterHero) se ignoran
+                EmitControlReady(early: false);
             });
+        }
+
+        private static void EmitControlReady(bool early)
+        {
+            _awaitingControl = false;
+            SessionManager.Emit("control_ready", new Json().S("scene", CurrentScene).B("early", early).End());
+            SessionManager.TakeProgressStartIfNeeded();
         }
 
         // ---------------- sondeo por frame (desde el Runner) ----------------
