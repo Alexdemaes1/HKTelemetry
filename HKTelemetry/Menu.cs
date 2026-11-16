@@ -20,28 +20,12 @@ namespace HKTelemetry
             var s = Settings;
             return new List<IMenuMod.MenuEntry>
             {
-                // player_id: solo lectura (no hay campo de texto; viene en el kit).
-                new IMenuMod.MenuEntry("Jugador", new[] { s.PlayerId }, "ID del participante (viene en el kit)",
-                    _ => { }, () => 0),
-
                 Option("Indicador de grabación", new[] { "Visible", "Oculto" }, "Oculta el punto de grabación",
                     i => s.HideHud = i == 1, () => s.HideHud ? 1 : 0),
 
-                Option("Horas jugadas", new[] { "0", "Menos de 10", "10-50", "50-200", "Más de 200" },
-                    "Horas totales en Hollow Knight antes del estudio",
-                    i => s.HoursBucket = i, () => s.HoursBucket),
-
-                Option("¿Te lo has pasado?", new[] { "No", "Un final", "106% / 112%", "Steel Soul" }, null,
-                    i => s.Completed = i, () => s.Completed),
-
-                Option("Experiencia en metroidvanias", new[] { "Ninguna", "Alguna", "Mucha" }, null,
-                    i => s.MetroidvaniaExp = i, () => s.MetroidvaniaExp),
-
-                Option("Control preferido", new[] { "Teclado", "Mando" }, null,
-                    i => s.InputPref = i, () => s.InputPref),
-
                 Option("Frecuencia de muestreo", Array.ConvertAll(HzOptions, h => h + " Hz"), "Solo para pruebas",
-                    i => s.SampleHz = HzOptions[i], () => Math.Max(0, Array.IndexOf(HzOptions, s.SampleHz))),
+                    i => s.SampleHz = HzOptions[i],
+                    () => { int i = Array.IndexOf(HzOptions, s.SampleHz); return i < 0 ? HzOptions.Length - 1 : i; }),
 
                 Option("Modo debug", new[] { "No", "Sí" }, "Muestra contadores en pantalla",
                     i => s.Debug = i == 1, () => s.Debug ? 1 : 0),

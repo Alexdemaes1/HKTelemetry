@@ -11,7 +11,7 @@
 
 ## 1. Carpeta de salida
 
-`%USERPROFILE%/AppData/LocalLow/Team Cherry/Hollow Knight/HKTelemetry/<session_id>/`
+`%USERPROFILE%/AppData/LocalLow/Team Cherry/Hollow Knight/HKTelemetry/<yyyyMMdd_HHmmss>_<player_id>_<8 primeros del session_id>/`
 (`Application.persistentDataPath`, la misma carpeta de los saves y de `ModLog.txt`).
 
 | Fichero | Durante la sesión | Al cerrar |
@@ -47,7 +47,7 @@ al arrancar el juego la siguiente vez.
   "mod_version": "0.1.0",
   "session_id": "uuid4", "launch_id": "uuid4",      // launch_id: uno por arranque del juego
   "player_id": "P02",
-  "experience": { "hours_bucket": 2, "completed": 1, "metroidvania_exp": 1, "input_pref": 0 },
+  "experience": { /* automática, sección 3.2 */ },
   "game": {
     "api_version": "1.5.78.11833-77",   // ModHooks.ModVersion (versión de la DLL parcheada instalada)
     "unity_version": "2020.2.2f1",      // Application.unityVersion (detecta la build 12459 / Unity 6)
@@ -56,10 +56,9 @@ al arrancar el juego la siguiente vez.
   },
   "save": { "slot": 1, "file_sha256": "…", "start_kind": "load|new_game|new_game_steel_soul|new_game_godseeker" },
   "display": { "width": 1920, "height": 1080, "fullscreen_mode": "…", "vsync": 1, "target_fps": 60 },
-  "input_device_start": "keyboard|controller",
-  "settings": { "sample_hz": 30, "hide_hud": false, "debug": false },
+  "settings": { "sample_hz": 60, "hide_hud": false, "debug": false },
   "start_utc": "2026-11-16T19:00:00Z",
-  "end": { "utc": "…", "reason": "quit_menu|app_quit|permadeath|ending|mod_unload|recovered", "t_game": 0.0, "t_real": 0.0 },
+  "end": { "utc": "…", "reason": "quit_menu|ending|menu|emergency_menu|permadeath|app_quit|restarted|recovered", "t_game": 0.0, "t_real": 0.0 },
   "progress_start": { /* sección 3.1 */ },
   "progress_end":   { /* sección 3.1 */ },
   "counters": { "events": 0, "frames": 0, "inputs": 0, "dropped_frames": 0, "dropped_events": 0,
@@ -89,6 +88,22 @@ puede no estarlo, y en ese caso se recalcula en Python. **El mod nunca llama a
 Además, `pd_full`: volcado completo de los ~1460 campos escalares (para la línea base de
 `pd_change`) en `session_pd_start.json.gz` y `session_pd_end.json.gz`.
 
+### 3.2 Experiencia previa (automática, no se pregunta al jugador)
+
+Se recoge al empezar cada sesión. Todo crudo: «horas» y «se lo ha pasado» se derivan en Python.
+
+| Campo | Fuente |
+|---|---|
+| `steam_playtime_min` | Horas totales del juego en Steam (minutos). `<Steam>/userdata/<id>/config/localconfig.vdf`, bloque de la app `367520`, campo `Playtime`. Solo se lee ese número. `null` si no hay Steam (GOG) |
+| `achievements_unlocked` | Claves de los logros desbloqueados. Se recorre la lista de logros del propio juego (`GameManager.achievementHandler.achievementsList`) y se consulta cada uno con `Platform.Current.IsAchievementUnlocked` (Steam o GOG, solo lectura). `null` si la plataforma no responde |
+| `achievements_total`, `achievements_source` | Número de logros del juego; `platform` o `unavailable` |
+| `saves[]` | Por cada slot 1–4 con partida: `slot, play_time_s, completion, unlocked_completion_rate, permadeath_mode, boss_rush_mode, map_zone, max_health`. Fuente: `GameManager.GetSaveStatsForSlot`, lo mismo que usa la pantalla de selección de partida |
+
+Derivación prevista en Python:
+- **Horas:** `steam_playtime_min / 60`; si es `null`, la suma de `saves[].play_time_s / 3600`.
+- **Se lo ha pasado:** logros de final (`ENDINGA`, `ENDINGB`, `ENDINGC`, `ENDINGD`…) y de Steel Soul; si no hay logros, alguna partida con `unlocked_completion_rate`.
+- **Control:** del uso real (evento `device`, fase 5), no se pregunta.
+
 ## 4. `events.jsonl`
 
 Una línea JSON por evento:
@@ -109,7 +124,7 @@ Una línea JSON por evento:
 | `scene_exit` | `from, to, reason, exit_gate, entry_gate, vis, info_type, prevent_fade, first_level, respawning` | `On.GameManager.BeginSceneTransition` (antes de `orig`), además de `On.GameManager.LoadScene` y `ReturnToMainMenu` para los caminos que no usan `BeginSceneTransition` |
 | `scene_enter` | `scene, entry_gate, map_zone, scene_type, load_s` | `On.GameManager.OnNextLevelReady` (después de `orig`; se deduplica por escena). Es el único punto que alcanzan los tres caminos de carga. `load_s` sale de `SceneLoad.GetDuration` (vía `GameManager.SceneTransitionBegan`) |
 | `control_ready` | `scene` | primer `On.GameManager.FinishedEnteringScene` tras `scene_enter`. Marca cuándo el héroe acepta input. Los que llegan por *hazard respawn* se ignoran |
-| `game_state` | `from, to` | sondeo de `gameState` cada frame. `pause`/`unpause` son transiciones hacia o desde `PAUSED` **[derivado]** |
+| `game_state` | `from, to, paused` | sondeo de `gameState` cada frame. `pause`/`unpause` son transiciones hacia o desde `PAUSED` **[derivado]** |
 
 > `ModHooks.SceneChanged` **no se usa**: no salta en puertas, muertes, cargas, ciervos ni
 > sueños (solo en `LoadScene`).
@@ -215,7 +230,7 @@ los objetos que se desactivan solos se guardan.
 
 ## 5. `frames.csv`
 
-Muestreo a `sample_hz` (30 por defecto) desde un `MonoBehaviour` propio con `DontDestroyOnLoad`
+Muestreo a `sample_hz` (60 por defecto) desde un `MonoBehaviour` propio con `DontDestroyOnLoad`
 y acumulador de `unscaledDeltaTime`. Como mucho una muestra por frame. Solo se muestrea si
 `HeroController.UnsafeInstance != null`; cuando no hay héroe se escribe una fila con `gap=1`.
 
@@ -334,4 +349,4 @@ Se genera en el primer `scene_enter` de cada escena en la sesión, desde
 
 ## Changelog
 
-- **v1** (16/11/2026): esquema inicial, verificado contra el código descompilado de la 1.5.78.
+- **v1** (16/11/2026): esquema inicial, verificado contra el código descompilado de la 1.5.78. Experiencia automática (§3.2) en lugar de autodeclarada; 60 Hz por defecto.

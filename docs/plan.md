@@ -33,7 +33,8 @@ Verificación de la API contra el código, con referencias `archivo:línea`: [ap
 ```
 HKTelemetry/
   HKTelemetry.cs        Mod, IGlobalSettings<GlobalSettings>, IMenuMod; solo engancha y desengancha
-  GlobalSettings.cs     player_id, sample_hz, hide_hud, debug, experiencia
+  Settings.cs           player_id (solo en el JSON del kit), sample_hz, hide_hud, debug
+  Menu.cs               menú de ajustes (indicador, frecuencia, debug)
   Runner.cs             MonoBehaviour DontDestroyOnLoad: reloj, sondeos por frame, cola de errores → Logger/HUD
   Session/              SessionManager (ciclo de vida), ProgressSnapshot, PlayerDataTable (delegados tipados)
   Writing/              TelemetryWriter (hilo dedicado + colas), JsonlSink, CsvSink, Compressor
@@ -84,7 +85,7 @@ y la carpeta de sesión → `tools/validate.py` → commit.
 
 ## Decisiones cerradas
 
-1. **Frames:** 30 Hz en CSV (gzip al cerrar la sesión), configurable de 10 a 60 Hz.
+1. **Frames:** 60 Hz en CSV (gzip al cerrar la sesión), configurable a 10/20/30 Hz solo para pruebas. Estimado ≈ 22 MB/h sin comprimir, ≈ 5 MB/h en gzip.
 2. **Inputs:** ambos. Eventos de cambio con precisión de frame (`inputs.csv`) y `input_bitmask` en frames.
 3. **Sesión:** desde cargar o crear una partida hasta volver al menú o cerrar el juego. Más un
    `launch_id` por arranque. Las sesiones de Godseeker y Steel Soul también se cubren (`StartNewGame`).
@@ -97,10 +98,7 @@ y la carpeta de sesión → `tools/validate.py` → commit.
 6. **Motivo de `scene_exit`:** clasificador sobre `SceneLoadInfo` en `BeginSceneTransition`,
    guardando siempre los campos crudos para poder recalcularlo. Tabla en `schema.md` §4.1.
    `bench_respawn` deja de ser un motivo de salida: es la entrada tras una muerte o una carga.
-7. **Experiencia:** campos cerrados en `GlobalSettings`. El kit trae
-   `Mods/HKTelemetry/HKTelemetry.GlobalSettings.json` ya relleno: si existe junto a la DLL, la
-   API lo lee y escribe ahí. Esa es la forma de poner el `player_id`, porque el menú no tiene
-   campos de texto. Cada cambio en el menú llama a `SaveGlobalSettings()`.
+7. **Experiencia:** automática, sin preguntar (`schema.md` §3.2): horas de Steam (o suma de las partidas), logros desbloqueados (o datos de las partidas) y el control que se use de verdad. El `player_id` va en `Mods/HKTelemetry/HKTelemetry.GlobalSettings.json` del kit y no aparece en el menú. El menú solo tiene: indicador de grabación, frecuencia de muestreo (pruebas) y modo debug.
 8. **Escritura:** hilo dedicado, volcado cada 500 ms o 64 KB, texto plano en append durante la
    sesión, gzip al cerrar y recuperación al siguiente arranque. Si hay presión se descartan
    frames antes que eventos, siempre con contador.

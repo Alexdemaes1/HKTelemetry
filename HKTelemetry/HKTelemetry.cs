@@ -1,5 +1,7 @@
 ﻿using System;
 using System.Reflection;
+using HKTelemetry.Recorders;
+using HKTelemetry.Session;
 using Modding;
 using UnityEngine;
 
@@ -39,7 +41,15 @@ namespace HKTelemetry
                     $"api={ModHooks.ModVersion} | unity={unity} ({(versionOk ? "OK" : "VERSION NO SOPORTADA")}) | " +
                     $"data={Application.persistentDataPath}");
                 if (!versionOk)
+                {
                     LogWarn($"Se esperaba Unity {ExpectedUnityVersion} (Hollow Knight 1.5.78.11833). No se grabará nada.");
+                    return;
+                }
+
+                SessionManager.Init();
+                Runner.Create();
+                SceneRecorder.Hook();
+                Log($"Grabando en {SessionManager.Root}");
             }
             catch (Exception e)
             {
