@@ -1,0 +1,168 @@
+### M1 [confirmed] PlayerData setters: how are SetBool/SetInt/SetFloat/SetString/SetVector3/SetVariable<T> patched; is the stored value still OLD while Set*Hook runs; which getter reads raw value without Get*Hook?
+Every PlayerData.Set* is [MonoModReplace]d to forward to an internal ModHooks.SetPlayerX(name, value, pd). ModHooks runs the hook invocation list (each in try/catch) and ONLY AFTERWARDS calls pd.SetXInternal(target, value). So inside SetPlayerBoolHook/SetPlayerIntHook/... the field still holds the OLD value (plan phase 3 assumption is correct). IncrementInt/DecrementInt/IntAdd are also replaced and go through ModHooks.SetPlayerInt with GetIntInternal(name)+delta. SetVariable<T> dispatches by typeof(T): bool/int/float/string/Vector3 are routed to the typed hooks (so SetPlayerVariableHook only fires for other types: enums like MapZone, structs like BossStatue.Completion, lists). Raw getters that do NOT fire Get*Hook: pd.GetBoolInternal / GetIntInternal / GetFloatInternal / GetStringInternal / GetVector3Internal / GetVariableInternal<T> (public, via ReflectionHelper cached delegates). Even better and cheaper: in OUR mod's compiled code, a direct field read `PlayerData.instance.geo` is a plain ldfld (our DLL is not pre-patched), so it bypasses the hooks entirely. Default values on unknown field: GetIntInternal -> -9999, GetFloatInternal -> -9999f, GetStringInternal -> " ", GetBoolInternal -> false; SetFieldSafe silently ignores unknown names, but the Set hook is still invoked with that unknown name.
+API: public static event SetBoolProxy SetPlayerBoolHook;   // delegate bool SetBoolProxy(string name, bool orig)
+public static event SetIntProxy SetPlayerIntHook;     // delegate int SetIntProxy(string name, int orig)
+public static event SetFloatProxy SetPlayerFloatHook; // float (string name, float orig)
+public static event SetStringProxy SetPlayerStringHook; // string (string name, string res)
+public static event SetVector3Proxy SetPlayerVector3Hook; // Vector3 (string name, Vector3 orig)
+public static event SetVariableProxy SetPlayerVariableHook; // object (Type type, string name, object value)
+// raw reads (no hook):
+public bool PlayerData.GetBoolInternal(string boolName)
+public int PlayerData.GetIntInternal(string intName)
+public float PlayerData.GetFloatInternal(string floatName)
+public string PlayerData.GetStringInternal(string stringName)
+public Vector3 PlayerData.GetVector3Internal(string vector3Name)
+public T PlayerData.GetVariableInternal<T>(string variableName)
+CAVEAT: Every hook MUST return the incoming value unchanged (orig/res/value). The hook fires for every Set call even if the value does not change (dedupe by comparing with the old value). Value seen by our hook is after any earlier-registered mods' modifications. Do NOT subscribe to Get*Hooks: after the PrePatcher every PlayerData field read in the game goes through GetX -> ModHooks.GetPlayerX (see M2), so a Get hook fires extremely often.
+
+### M2 [corrected] Which game code modifies PlayerData fields directly (bypassing SetInt/hooks)? What would pd_change via hooks miss, and a complement?
+The plan's premise is mostly wrong in a GOOD way: the Modding API's PrePatcher rewrites EVERY ldfld/stfld on PlayerData fields in the whole Assembly-CSharp (all types, nested types, PlayMaker actions included) into calls to GetBool/GetInt/... and SetBoolSwappedArgs/SetIntSwappedArgs/... (which call SetBool/SetInt -> ModHooks). That is why AddGeo, TakeGeo, AddMPCharge, TakeMP, TakeReserveMP, ClearMP, AddToMaxHealth, MaxHealth, orig_AddHealth, TakeHealthInternal, StartSoulLimiter, etc. all appear as SetIntSwappedArgs(...) in the decompiled code: they DO fire SetPlayerIntHook. PlayMaker actions SetPlayerDataInt/Bool/..., IncrementPlayerDataInt, DecrementPlayerDataInt, PlayerDataIntAdd all go through GameManager.SetPlayerDataX -> playerData.SetX/IncrementInt/IntAdd -> hooks. A grep for `playerData.x =` style writes outside PlayerData.cs found none. What hooks WILL MISS: (1) PlayerData.SetupNewPlayerData() and AddGGPlayerDataOverrides() — explicitly excluded by the PrePatcher; SetupNewPlayerData runs in the PlayerData constructor and in Reset() (new game). (2) Save load: GameManager.LoadGame deserializes a whole new PlayerData (Json.NET, fallback JsonUtility) and assigns PlayerData.instance = playerData — every field changes with no hook; the old instance reference becomes stale. (3) In-place mutation of reference-type fields obtained via GetVariable (no Set call): 16 sites, e.g. scenesVisited.Add (GameManager.cs:997, SceneManager.cs:276), scenesMapped.Add (PlayerData.UpdateGameMap), equippedCharms Add/Remove/Clear (EquipCharm/UnequipCharm/BossSequenceController), unlockedBossScenes Add/RemoveAt, scenesEncounteredBench/Cocoon/DreamPlant/DreamPlantC, scenesGrubRescued, scenesFlameCollected. (4) ldflda/ref uses not rewritten by the PrePatcher (it only handles Ldfld/Stfld): SaveDataUpgradeHandler passes `ref playerData.dreamGateScene` and `ref playerData.scenesMapped` (save-upgrade only). (5) Any write from assemblies other than Assembly-CSharp (none found). Complement proposal: (a) take a full typed snapshot of PlayerData right after SavegameLoadHook / NewGameHook (that is the session baseline; do not emit pd_change for it, emit progress snapshot); (b) a low-rate diff (e.g. 1-2 Hz on the main thread, or on SceneChanged / BeforeSavegameSaveHook / pause) of all scalar fields against a cached copy using delegates built once at Initialize (DynamicMethod/Expression per field, as ReflectionHelper does), emitting pd_change with source='diff' for anything the hooks did not report; (c) for the 15 List fields compare Count (and emit added/removed elements) at the same tick. Field count to diff: 1526 instance fields = 1100 bool, 329 int, 13 float, 13 string, 3 Vector3, 1 MapZone, 45 BossStatue.Completion, 5 BossSequenceDoor.Completion, 1 BossSequenceController.BossSequenceData, 10 List<string>, 4 List<Vector3>, 1 List<int>, 1 private Dictionary (mapZoneBools; skip). Cost estimate: ~1460 primitive compares via typed compiled delegates is on the order of 10-30 microseconds per pass with zero allocation if bools/ints/floats are kept in typed arrays (no boxing); FieldInfo.GetValue would box and be ~50-100x slower — avoid. At 1 Hz the cost is negligible.
+API: // what the PrePatcher generates (internal, on PlayerData):
+internal void SetIntSwappedArgs(int value, string name)  // -> SetInt(name, value)
+internal void SetBoolSwappedArgs(bool value, string name)
+internal void SetVariableSwappedArgs<T0>(T0 value, string name)
+// hooks for lifecycle baseline:
+public static event Action<int> ModHooks.SavegameLoadHook;
+public static event Action ModHooks.NewGameHook;
+public static event Action<SaveGameData> ModHooks.BeforeSavegameSaveHook;
+// reflection helper that builds cached typed delegates:
+public static TField ReflectionHelper.GetField<TObject, TField>(TObject obj, string name)
+CAVEAT: Because all reads also go through GetX -> ModHooks.GetPlayerX, the game already pays a hook-dispatch cost per PlayerData read; do not add Get hooks. Remember PlayerData.instance changes identity on every save load: re-resolve it (do not cache the object across loads). The PlayerData.instance getter lazily creates a new PlayerData if null, so never touch it from the writer thread. Verify in game that health/MPCharge spam rates match expectations (hooks fire on every soul gain).
+
+### M3 [confirmed] Exact delegate signatures in Handlers.cs
+All in namespace Modding.Delegates. Value-returning ones must return their input untouched: HitInstanceHandler -> return hit; AfterTakeDamageHandler -> return damageAmount; OnEnableEnemyHandler -> return isAlreadyDead. OnReceiveDeathEventHandler has ref params: never assign them. Events: ModHooks.HitInstanceHook, SlashHitHook, AfterTakeDamageHook, OnEnableEnemyHook, OnReceiveDeathEventHook, RecordKillForJournalHook, CharmUpdateHook.
+API: public delegate void CharmUpdateHandler(PlayerData data, HeroController controller);
+public delegate int AfterTakeDamageHandler(int hazardType, int damageAmount);
+public delegate void SlashHitHandler(Collider2D otherCollider, GameObject slash);
+public delegate HitInstance HitInstanceHandler(Fsm owner, HitInstance hit);
+public delegate bool OnEnableEnemyHandler(GameObject enemy, bool isAlreadyDead);
+public delegate void OnReceiveDeathEventHandler(EnemyDeathEffects enemyDeathEffects, bool eventAlreadyReceived, ref float? attackDirection, ref bool resetDeathEvent, ref bool spellBurn, ref bool isWatery);
+public delegate void RecordKillForJournalHandler(EnemyDeathEffects enemyDeathEffects, string playerDataName, string killedBoolPlayerDataLookupKey, string killCountIntPlayerDataLookupKey, string newDataBoolPlayerDataLookupKey);
+CAVEAT: Fsm is HutongGames.PlayMaker.Fsm. The OnReceiveDeathEvent doc says it may fire multiple times per enemy: use eventAlreadyReceived to dedupe.
+
+### M4 [confirmed] IGlobalSettings<T> / ILocalSettings<T> declarations and GlobalSettings json path
+Both live in modding-api/Assembly-CSharp/ModSaveData.cs (decompiled: Modding/IGlobalSettings.cs, Modding/ILocalSettings.cs). Global settings file: `{ModTypeName}.GlobalSettings.json` (e.g. HKTelemetry.GlobalSettings.json) in Application.persistentDataPath (Windows: %USERPROFILE%/AppData/LocalLow/Team Cherry/Hollow Knight), UNLESS a file with that name already exists next to the mod DLL, in which case that one is used (and saved to). Loaded with Json.NET in the Mod constructor (before Initialize); a .bak is kept. Saved only on ModHooks.ApplicationQuitHook, or when the mod calls the protected SaveGlobalSettings(). Local settings go into user{slot}.modded.json.
+API: public interface IGlobalSettings<S> { void OnLoadGlobal(S s); S OnSaveGlobal(); }
+public interface ILocalSettings<S> { void OnLoadLocal(S s); S OnSaveLocal(); }
+protected void Mod.SaveGlobalSettings();
+// path: Path.Combine(Application.persistentDataPath, $"{GetType().Name}.GlobalSettings.json")
+CAVEAT: If the game crashes or is killed, global-settings changes made in the menu are lost unless the mod calls SaveGlobalSettings() itself after each change. OnLoadGlobal is never called if the file does not exist, so give the static settings a default value. The override-next-to-DLL behaviour is handy for the participant kit (ship a prefilled HKTelemetry.GlobalSettings.json in Mods/HKTelemetry/).
+
+### M5 [confirmed] IMenuMod MenuEntry fields/constructors, ToggleButtonInsideMenu, text input helper?
+IMenuMod (declared in modding-api/Assembly-CSharp/IMenuRegisteringMod.cs) requires `List<MenuEntry> GetMenuData(MenuEntry? toggleButtonEntry)` and `bool ToggleButtonInsideMenu { get; }`. MenuEntry is a nested struct with public fields Name, Description (may be null), Values (string[]), Saver (Action<int>, receives selected index), Loader (Func<int>, returns current index); one constructor (name, values, description, saver, loader) plus the default struct ctor / object initializer. ToggleButtonInsideMenu only matters if the mod is also ITogglableMod: when true, the mod list does NOT create the on/off row and instead passes a prebuilt toggleButtonEntry (Values = MOH_OFF/MOH_ON) to GetMenuData, which you must add to your returned list yourself; when false (or not togglable) toggleButtonEntry is null. The API's menu content types are HorizontalOption, Keybind, MenuButton, ScrollPane, StaticContent: there is NO text-input field helper. player_id must come from the global settings JSON (optionally shipped next to the DLL, see M4), or be displayed read-only in the menu as a single-value option.
+API: public interface IMenuMod : IMod {
+  List<MenuEntry> GetMenuData(MenuEntry? toggleButtonEntry);
+  bool ToggleButtonInsideMenu { get; }
+  public struct MenuEntry {
+    public string Name; public string Description; public string[] Values;
+    public Action<int> Saver; public Func<int> Loader;
+    public MenuEntry(string name, string[] values, string description, Action<int> saver, Func<int> loader);
+  }
+}
+// ICustomMenuMod alternative: MenuScreen GetMenuScreen(MenuScreen modListMenu, ModToggleDelegates? toggleDelegates);
+CAVEAT: Saver is called on change; call SaveGlobalSettings() there if you need persistence before quit. Building a real text field would require custom UGUI InputField work (not provided).
+
+### M6 [confirmed] Logger: ModLog.txt path, levels, thread-safety
+ModLog.txt = Path.Combine(Application.persistentDataPath, "ModLog.txt"); the previous one is moved to "Old ModLogs/ModLog <date>.txt" (deleted after ModlogMaxAge=7 days). Levels: Fine, Debug, Info, Warn, Error, Off. Effective level: Debug by default at startup, but if ModdingApi.GlobalSettings.json exists its LoggingLevel (default Info) is applied, so LogDebug/LogFine are usually suppressed. Static Logger.Log/LogDebug/LogWarn/LogError and Loggable instance methods (Mod inherits Loggable, prefixes [ModName]). Thread-safety: the source comment says it is threadsafe but blocking; WriteToFile takes a lock and the StreamWriter has AutoFlush=true (synchronous disk write per call). Inside the lock it calls ModHooks.LogConsole, which only touches Unity (new GameObject, Text.text) if ShowDebugLogInGame is true; from a background thread that Unity call would throw, but it is wrapped in try/catch (Debug.LogException), and the file write still happens. Conclusion: callable from the writer thread, but each call is a synchronous flushed write under a global lock: never log per event on the Unity thread, rate-limit errors.
+API: public static class Modding.Logger {
+  public static void Log(string message, LogLevel level);
+  public static void LogFine(string); LogDebug(string); Log(string); LogWarn(string); LogError(string); (+ object overloads)
+}
+public enum LogLevel { Fine, Debug, Info, Warn, Error, Off }
+// Mod : Loggable -> this.Log / LogDebug / LogWarn / LogError
+CAVEAT: If a participant enables the in-game API console, logging from the writer thread will raise and swallow a Unity main-thread exception each time (extra Debug.LogException noise in Player.log). Safer: background thread pushes error messages into a ConcurrentQueue that the main thread drains to Logger/HUD.
+
+### M7 [confirmed] Version: Constants.GAME_VERSION, ModHooks.version / GameVersionData, reading the RUNNING game version
+Constants.GAME_VERSION = "1.5.78.11833" is a `public const string` in the game's Assembly-CSharp. Because it is const, referencing it from our mod gets INLINED into HKTelemetry.dll at compile time (it will always say the version we compiled against). To read the running version use ModHooks.version.GetGameVersionString() (computed at runtime inside the running Assembly-CSharp by splitting its own Constants.GAME_VERSION) or ModHooks.ModVersion ("1.5.78.11833-77", includes the API version), or reflection typeof(Constants).GetField("GAME_VERSION").GetRawConstantValue(). Also available: PlayerData.version (string, written into the save on SaveGame and in SetupNewPlayerData; for a loaded save it is the version that last wrote it: useful per-session metadata) and BuildMetadata.Embedded (BranchName, Revision, BuildTime from StreamingAssets/BuildMetadata.json; may be null if the file is absent). UnityEngine.Application.version / Application.unityVersion are Unity APIs (not in the decompiled game code; Application.unityVersion is used by InControl).
+API: public const string Constants.GAME_VERSION = "1.5.78.11833";
+public static GameVersionData ModHooks.version;  // .GetGameVersionString() -> "major.minor.revision.package"
+public static string ModHooks.ModVersion;        // e.g. "1.5.78.11833-77"
+public string PlayerData.version;
+public static BuildMetadata BuildMetadata.Embedded { get; } // BranchName, Revision, BuildTime
+CAVEAT: Whether BuildMetadata.json ships with the Steam build, and what Application.version returns, needs an in-game check (log both once at Initialize). Recommended check for the plan's phase 8: compare ModHooks.version.GetGameVersionString() with the expected "1.5.78.11833" literal.
+
+### M8 [confirmed] UI helpers: CanvasUtil methods and fonts
+Modding.CanvasUtil (static) provides: fonts TrajanBold / TrajanNormal (lazy lookup of "TrajanPro-Bold"/"TrajanPro-Regular" via Resources.FindObjectsOfTypeAll<Font>), GetFont(name), CreateCanvas (two overloads; adds Canvas, CanvasScaler ScaleWithScreenSize, GraphicRaycaster, CanvasGroup), CreateTextPanel (Font or bold overload), CreateImagePanel, CreateBasePanel, NullSprite, CreateSprite, CreateButton, CreateToggle, CreateRectMask2DPanel, FadeIn/OutCanvasGroup, plus nested class RectData. The API's own in-game Console is the template for our HUD: CreateCanvas(ScreenSpaceOverlay, 1920x1080), CanvasGroup interactable=false & blocksRaycasts=false, DontDestroyOnLoad, then image + text panels; Arial fallback via Resources.GetBuiltinResource.
+API: public static Font CanvasUtil.TrajanBold { get; }
+public static Font CanvasUtil.TrajanNormal { get; }
+public static Font CanvasUtil.GetFont(string fontName)
+public static GameObject CanvasUtil.CreateCanvas(RenderMode renderMode, int referencePixelsPerUnit)
+public static GameObject CanvasUtil.CreateCanvas(RenderMode renderMode, Vector2 size)
+public static GameObject CanvasUtil.CreateTextPanel(GameObject parent, string text, int fontSize, TextAnchor textAnchor, RectData rectData, Font font)
+public static GameObject CanvasUtil.CreateTextPanel(GameObject parent, string text, int fontSize, TextAnchor textAnchor, RectData rectData, bool bold = true)
+public static GameObject CanvasUtil.CreateImagePanel(GameObject parent, Sprite sprite, RectData rectData)
+public static Sprite CanvasUtil.NullSprite(byte[] data = null)
+public static GameObject CanvasUtil.CreateBasePanel(GameObject parent, RectData rd)
+public RectData(Vector2 sizeDelta, Vector2 anchorPosition)
+public RectData(Vector2 sizeDelta, Vector2 anchorPosition, Vector2 min, Vector2 max)
+public RectData(Vector2 sizeDelta, Vector2 anchorPosition, Vector2 min, Vector2 max, Vector2 pivot)
+CAVEAT: Trajan fonts are found only after the game has loaded them (fine after the title screen); fall back to Arial if null. All of this must run on the Unity main thread.
+
+### M9 [confirmed] Mod base class: Initialize overloads, GetVersion, loading, ITogglableMod Unload
+Mod is `public abstract class Mod : Loggable, IMod`. Constructor `protected Mod(string name = null)` (name defaults to type name) loads global settings and hooks save methods. Overrides: `public virtual void Initialize(Dictionary<string, Dictionary<string, GameObject>> preloadedObjects)` (default calls Initialize()), `public virtual void Initialize()`, `public virtual string GetVersion()` (default "UNKNOWN"), `public virtual int LoadPriority()` (default 1), GetPreloadNames(), GetMenuButtonText(). Loading: ModLoader scans every SUBDIRECTORY of <Managed>/Mods (except Mods/Disabled) for *.dll, constructs every non-abstract subclass of Mod via its parameterless ctor, orders by LoadPriority, runs preloads, then LoadMod -> Initialize(preloads); then if the mod is ITogglableMod and disabled in ModdingApi settings, UnloadMod -> Unload(). ITogglableMod: `void Unload();` — unhook everything. On re-enable, Initialize is called AGAIN (with null preloads) on the same instance, so Initialize must be idempotent (the SimpleHooks example guards with a static LoadedInstance and unhooks in Unload).
+API: public abstract class Mod : Loggable, IMod
+protected Mod(string name = null)
+public virtual void Initialize(Dictionary<string, Dictionary<string, GameObject>> preloadedObjects)
+public virtual void Initialize()
+public virtual string GetVersion()
+public virtual int LoadPriority()
+public interface ITogglableMod : IMod { void Unload(); }
+CAVEAT: A DLL placed directly in Managed/Mods/ (not in a subfolder) is ignored. Initialize/constructor exceptions put the mod in an error state (logged in ModLog). For a logger, decide whether to be togglable at all: unloading mid-session must close the session cleanly (flush writer) in Unload().
+
+### M10 [confirmed] Threading: Unity API from background thread; any main-thread dispatcher or coroutine runner?
+The API has no main-thread dispatcher / SynchronizationContext helper (grep for mainthread, dispatcher, SynchronizationContext: nothing). The API itself only uses background threads for pure non-Unity work (Task.Run for scene repacking, new Thread for ReflectionHelper.PreloadCommonTypes), which matches the plan: the writer thread must only do file I/O; Unity calls and PlayerData.instance access stay on the main thread. Coroutine runners in practice: any MonoBehaviour. The API runs its loader on a DontDestroyOnLoad GameObject with the game's do-nothing NonBouncer component; GameManager.instance / HeroController.instance StartCoroutine are also used in API code. For per-frame main-thread work you can use ModHooks.HeroUpdateHook (called at the start of HeroController.Update, only while the hero exists) or, more robust (works in menus/cutscenes), our own MonoBehaviour on a DontDestroyOnLoad GameObject whose Update() drains a ConcurrentQueue (HUD status, errors) — same pattern as the API Console.
+API: public static event Action ModHooks.HeroUpdateHook;
+public class NonBouncer : MonoBehaviour  // game class, empty, usable as coroutine host
+UnityEngine.Object.DontDestroyOnLoad(go); go.AddComponent<T>().StartCoroutine(...)
+CAVEAT: Unity's main-thread restriction is enforced by Unity itself (UnityException), not by code in the reference; not citable here but standard. HeroUpdateHook does not run on the title screen or while HeroController is absent.
+
+### M11 [confirmed] Save slot, save file path, game save folder
+Current slot: `public int GameManager.profileID` (GameManager.instance.profileID); also PlayerData.profileID is written on save. Save folder: DesktopPlatform.saveDirPath = Application.persistentDataPath (Windows: %USERPROFILE%/AppData/LocalLow/Team Cherry/Hollow Knight). File name: slot 0 -> "user.dat", otherwise "user{N}.dat" (HK uses slots 1-4 -> user1.dat..user4.dat), overridable by ModHooks.GetSaveFileNameHook; backups ".bak"/".del"; modded data in "user{N}.modded.json". So HKTelemetry/ goes to Path.Combine(Application.persistentDataPath, "HKTelemetry"), next to ModLog.txt and the saves. PITFALL: in GameManager.LoadGame, ModHooks.OnAfterSaveGameLoad(saveGameData) runs BEFORE `profileID = saveSlot`, so inside AfterSavegameLoadHook GameManager.instance.profileID still holds the previous value. Use SavegameLoadHook(int slot) (called after profileID is set), or saveGameData.playerData.profileID.
+API: public int GameManager.profileID;
+public static event Action<int> ModHooks.SavegameLoadHook;   // arg = slot, fired after profileID set
+public static event Action<SaveGameData> ModHooks.AfterSavegameLoadHook; // fired BEFORE profileID set
+public static event Action<int> ModHooks.SavegameSaveHook;
+public static event Func<int, string> ModHooks.GetSaveFileNameHook;
+// path: Path.Combine(Application.persistentDataPath, slot == 0 ? "user.dat" : $"user{slot}.dat")
+CAVEAT: DesktopPlatform also writes a versioned copy saveSlotPath.Replace(".dat","") + "_1.5.78.11833.dat" in some path (line 229); not needed for telemetry.
+
+### M12 [needs_ingame_test] MonoMod On-hooks naming (overloads, coroutines), API guidance, example mods
+The API build generates MMHOOK_Assembly-CSharp.dll and MMHOOK_PlayMaker.dll with `MonoMod.RuntimeDetour.HookGen.exe --private`, so On.* exists for private methods too (e.g. private IEnumerator HeroController.Die()). HookGen runs on the PrePatched Assembly-CSharp BEFORE MonoMod applies the API patches (MonoMod writes a separate MONOMODDED_ file), so MMHOOK contains no orig_* methods and no Modding.* types, but does contain the PrePatcher-added internal PlayerData.Set*SwappedArgs; hooking On.PlayerData.SetInt at runtime detours the final (API-replaced) method. Coroutines: the hook for an IEnumerator method only wraps creation of the enumerator (signature like `IEnumerator hook(orig_Die orig, HeroController self)`); code placed before `return orig(self)` runs when StartCoroutine is called, not when the coroutine finishes; to observe completion you must wrap/iterate the enumerator. Overloads: HookGen appends parameter-type suffixes to disambiguate overloaded names (e.g. PlayerData.SetBenchRespawn has 3 overloads; HeroController.TakeDamage has one), but the exact suffix spelling cannot be verified here because MMHOOK_Assembly-CSharp.dll is not on disk yet (the game's Managed folder currently has no MMHOOK* and no Mods/ folder; the API is not installed). The modding-api repo has NO README/example guidance for On.* usage. Examples worth copying: Examples/SimpleHooks (ITogglableMod, idempotent Initialize, Unload unhooking, GetVersion from assembly; its .csproj is the baseline: net472, LangVersion latest, HintPath to Managed) and Examples/CustomSaveData (IGlobalSettings + ILocalSettings with static default settings). Only these two examples exist; for IMenuMod there is no example — use ModListMenu.CreateModMenu as the reference.
+API: // generated by HookGen (verify names in IDE once MMHOOK is installed):
+On.HeroController.Die += (On.HeroController.orig_Die orig, HeroController self) => { /* before */ return orig(self); };
+On.HeroController.TakeDamage += (orig, self, go, side, dmg, hazard) => { orig(self, go, side, dmg, hazard); };
+// overloads: On.PlayerData.SetBenchRespawn_<ParamTypes...>  (exact suffix: TO VERIFY)
+CAVEAT: What to test once the API is installed: reference MMHOOK_Assembly-CSharp.dll from Managed/ in the csproj and check IDE autocomplete (or an ilspy/reflection dump) for On.PlayerData.SetBenchRespawn* names, On.HeroController.Die delegate shape, and On.GameManager.BeginSceneTransition (plan phase 1). Also confirm MMHOOK_PlayMaker gives On.HutongGames.PlayMaker.FsmState.* if FSM-state tracing is wanted.
+
+### NEW-NF1 [confirmed] PrePatcher routes ALL PlayerData reads/writes in Assembly-CSharp through hooks
+Plan phase 3 can rely on Set*Hooks for nearly all scalar changes (geo, health, MPCharge, charms, map bools...), including those made inside PlayerData helper methods and PlayMaker actions. But the volume will be high (every soul gain, every heal tick, repeated sets of identical values), so the planned 'only emit if changed' plus per-field rate limit is necessary. Because every game READ also goes through ModHooks.GetPlayerX, the mod must never register Get*Hooks.
+
+### NEW-NF2 [confirmed] Gaps in hook-based pd_change: new game, save load, list mutations
+Add to the plan: (1) take a baseline snapshot on SavegameLoadHook and NewGameHook (SetupNewPlayerData and the save deserialization write fields with no hooks, and PlayerData.instance is replaced on load); (2) a low-rate typed diff of the ~1460 scalar fields plus Count/content diff of the 15 List fields (scenesVisited, scenesMapped, equippedCharms, unlockedBossScenes, scenesEncountered*, scenesGrubRescued, scenesFlameCollected... are mutated in place with .Add/.Remove/.Clear and never fire SetPlayerVariableHook). Mark these pd_change rows with source=diff.
+
+### NEW-NF3 [confirmed] AfterSavegameLoadHook fires before GameManager.profileID is updated
+Plan phase 1 uses AfterSavegameLoadHook to open the session. Take the slot from SavegameLoadHook(int) (fires right after profileID = saveSlot) or from saveGameData.playerData.profileID, not from GameManager.instance.profileID inside AfterSavegameLoadHook.
+
+### NEW-NF4 [corrected] Constants.GAME_VERSION is const (inlined into the mod at compile time)
+Plan phase 8's version check must not compare Constants.GAME_VERSION from mod code (it is a compile-time literal). Use ModHooks.version.GetGameVersionString() or ModHooks.ModVersion at runtime.
+
+### NEW-NF5 [confirmed] Global settings are saved only on quit; override file next to the DLL
+Changes made in the IMenuMod menu (experience fields) are lost on a crash unless Saver calls SaveGlobalSettings(). For the participant kit, shipping HKTelemetry.GlobalSettings.json inside Mods/HKTelemetry/ makes the API read AND write that file instead of the one in persistentDataPath, which is a clean way to pre-fill player_id (no text input exists in IMenuMod).
+
+### NEW-NF6 [confirmed] Mod install location and togglable re-initialization
+The DLL must go in hollow_knight_Data/Managed/Mods/HKTelemetry/HKTelemetry.dll (subfolder required; Mods/Disabled is skipped). If the mod is ITogglableMod, Initialize is called again on re-enable, so hook registration must be guarded and Unload must close/flush the session.
+
+### NEW-NF7 [confirmed] ApplicationQuitHook ordering and Logger cost
+ApplicationQuitHook runs after GameManager's original OnApplicationQuit: use it to close the session and flush/join the writer thread (with a timeout). Logger.Log is a synchronous AutoFlush write under a global lock: never log per event or per frame; aggregate counters instead.
+
+### NEW-NF8 [needs_ingame_test] Modding API not yet installed in the game folder
+hollow_knight_Data/Managed currently has no MMHOOK_*.dll and no Mods/ folder (the game is still downloading/installing). The csproj HintPaths for MMHOOK_Assembly-CSharp.dll and the patched Assembly-CSharp.dll need the API installed first; until then On.* names (overload suffixes) cannot be verified.
+
+### NEW-NF9 [confirmed] Set hooks receive unknown field names
+FSMs can call SetInt/SetBool with names that are not PlayerData fields; the hook still fires, but SetFieldSafe silently does nothing and GetIntInternal returns -9999. pd_change should validate the name against the cached field table (and can count/log unknown names once).
+
+## VERIFIER non-confirmed
+- M2 partially_wrong: The core is correct. PrePatcher/Program.cs:54-64 skips only SetupNewPlayerData and AddGGPlayerDataOverrides and handles only Ldfld/Stfld (:84, :107). The swapped methods are `MethodAttributes.Assembly` (internal) (:274). The helper methods do use SetIntSwappedArgs (PlayerData.cs:4739, 4760, 4769, 4811, 4835, 4844, 4859). There are exactly 16 in-place List mutation sites (GameManager.cs:997,1010,1018,1030,1038,1046,1054; PlayerData.cs:4510,4871,4876; BossSequenceController.cs:299; HealthManager.cs:618; SceneManager.cs:276; ShowGodfinderIcon.cs:23; SaveDataUpgradeHandler.cs:133,142). The field counts match exactly (1526 total). Errors and omissions: (1) Reset() is not called on new game. Its only callers are QuitToMenu.cs:39 (`instance4.playerData.Reset();`) and orig_ClearSaveFile (GameManager.cs:3315). (2) AddGGPlayerDataOverrides runs in StartNewGame when bossRushMode is set (GameManager.cs:2980), which then goes to RunContinueGame, not RunStartNewGame. That Godseeker-mode new game fires neither NewGameHook nor SavegameLoadHook, so the proposed baseline (a) misses it. (3) NewGameHook can fire twice: LoadFirstScene calls OnWillActivateFirstLevel (which calls ModHooks.OnNewGame, GameManager.cs:1508) and then ModHooks.OnNewGame() again (:1516). The baseline must be idempotent. (4) RunContinueGame calls `SaveDataUpgradeHandler.UpgradeSaveData(ref playerData)` (GameManager.cs:3024) after SavegameLoadHook, so the save-upgrade writes, including the ref sites at SaveDataUpgradeHandler.cs:107-108, land after a SavegameLoadHook snapshot. (5) There are other ldflda accesses (MapMarkerMenu.cs:817-820 `pd.spareMarkers_b.ToString()`, HeroController.cs:2908), but they are reads only. The cost estimate is not verifiable from code.
+- M7 partially_wrong: ModHooks.version is not read at runtime from the running assembly's const. The API's own build inlined the const as a literal: decompiled/Assembly-CSharp/Modding/ModHooks.cs:512 `string[] array = "1.5.78.11833".Split(...)`, and :530 `ModVersion = version.GetGameVersionString() + "-" + 77;`. Because the installed Assembly-CSharp.dll is the API's MonoModded build, ModHooks.version, ModVersion and reflection GetRawConstantValue all report the version baked into that installed DLL. None of them detects the real game data build. A const inlined into our mod differs only if we compile against a different Assembly-CSharp than the one installed. GameManager.cs:2478 is also a literal. Other parts are fine: Constants.cs:8, GameVersionData.cs:12-15, PlayerData.cs:29/6807, BuildMetadata.cs:39-51.
+- NF2 partially_wrong: Direction is right (SceneManager.cs:276, HealthManager.cs:618, PlayerData.cs:3108; 15 List fields = 10 List<string> + 4 List<Vector3> + 1 List<int>), but the baseline triggers are incomplete. (1) Godseeker/boss-rush start: StartNewGame(bossRushMode) calls AddGGPlayerDataOverrides (no hooks, GameManager.cs:2980) and then RunContinueGame, firing neither NewGameHook nor SavegameLoadHook. (2) NewGameHook can fire twice on the LoadFirstScene path (GameManager.cs:1508 and 1516). (3) SaveDataUpgradeHandler.UpgradeSaveData(ref playerData) runs after SavegameLoadHook, in RunContinueGame (GameManager.cs:3024). (4) PlayerData.Reset() runs in place on QuitToMenu (QuitToMenu.cs:39) and on ClearSaveFile (GameManager.cs:3315) without hooks. The periodic diff covers these, but the snapshot logic must tolerate them.
+- NF4 partially_wrong: ModHooks.version / ModVersion are also compile-time literals, baked into the API's build: decompiled/Assembly-CSharp/Modding/ModHooks.cs:512 `"1.5.78.11833".Split(...)`. They report the version of the installed patched Assembly-CSharp, not the running game data. Using them, or reflection on Constants.GAME_VERSION, is still better than our inlined const because they reflect the installed DLL. But they cannot detect a mismatched game build; for that, also log BuildMetadata.Embedded (BuildMetadata.cs:39-51) and PlayerData.version.

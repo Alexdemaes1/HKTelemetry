@@ -1,0 +1,337 @@
+# HKTelemetry: esquema de datos (schema_version 1)
+
+> Fuente de verdad del formato. Cualquier cambio incrementa `schema_version` y se anota en el
+> changelog del final. Cada campo indica **de dónde sale** en el juego. Las referencias
+> `archivo:línea` apuntan a `reference/decompiled/Assembly-CSharp/`. El detalle completo, con
+> evidencias, está en [`api-notes/`](api-notes/).
+>
+> Marcas: **[test]** = depende de un FSM de PlayMaker y hay que confirmarlo jugando (lista en la
+> sección 9). **[derivado]** = el mod lo emite por comodidad, pero se puede recalcular en Python
+> desde datos crudos.
+
+## 1. Carpeta de salida
+
+`%USERPROFILE%/AppData/LocalLow/Team Cherry/Hollow Knight/HKTelemetry/<session_id>/`
+(`Application.persistentDataPath`, la misma carpeta de los saves y de `ModLog.txt`).
+
+| Fichero | Durante la sesión | Al cerrar |
+|---|---|---|
+| `session.json` | reescritura atómica cada 60 s | final, con `end` |
+| `events.jsonl` | append plano | `events.jsonl.gz` |
+| `frames.csv` | append plano | `frames.csv.gz` |
+| `inputs.csv` | append plano | `inputs.csv.gz` |
+| `scenes/<scene>.json` | una vez por escena y sesión | sin cambios |
+
+Una sesión que no llegó a cerrarse (crash) se comprime y se marca `end.reason = "recovered"`
+al arrancar el juego la siguiente vez.
+
+## 2. Relojes (en todos los ficheros)
+
+| Campo | Tipo | Definición |
+|---|---|---|
+| `t_real` | float s | segundos desde `start_utc` de la sesión (`Stopwatch`) |
+| `t_game` | float s | suma de `Time.unscaledDeltaTime` en los frames con `gameState ∈ {PLAYING, ENTERING_LEVEL, EXITING_LEVEL}` y `isPaused == false`. Es el mismo criterio que el reloj del juego (`GameManager.IncreaseGameTimer`), así que excluye pausa, carga, cinemáticas y menú |
+| `frame` | int | `Time.frameCount` |
+| `play_time` | float s | `GameManager.PlayTime` (reloj del save en vivo). Solo en eventos y frames, como control cruzado |
+
+- **Nunca** se deduce la pausa de `Time.timeScale == 0`: el *hit-stop* al recibir o dar golpes
+  también lo pone a 0 (`GameManager.FreezeMoment`). Se usan `GameManager.isPaused` y `gameState`.
+- `gameState` se sondea cada frame además de engancharse a `SetState`, porque `CinematicPlayer`
+  escribe el campo directamente (`CinematicPlayer.cs:254,413`).
+
+## 3. `session.json`
+
+```jsonc
+{
+  "schema_version": 1,
+  "mod_version": "0.1.0",
+  "session_id": "uuid4", "launch_id": "uuid4",      // launch_id: uno por arranque del juego
+  "player_id": "P02",
+  "experience": { "hours_bucket": 2, "completed": 1, "metroidvania_exp": 1, "input_pref": 0 },
+  "game": {
+    "api_version": "1.5.78.11833-77",   // ModHooks.ModVersion (versión de la DLL parcheada instalada)
+    "unity_version": "2020.2.2f1",      // Application.unityVersion (detecta la build 12459 / Unity 6)
+    "build_metadata": null,             // BuildMetadata.Embedded (BranchName, Revision) si existe
+    "save_version": "1.5.78.11833"      // PlayerData.version del save cargado
+  },
+  "save": { "slot": 1, "file_sha256": "…", "start_kind": "load|new_game|new_game_steel_soul|new_game_godseeker" },
+  "display": { "width": 1920, "height": 1080, "fullscreen_mode": "…", "vsync": 1, "target_fps": 60 },
+  "input_device_start": "keyboard|controller",
+  "settings": { "sample_hz": 30, "hide_hud": false, "debug": false },
+  "start_utc": "2026-11-16T19:00:00Z",
+  "end": { "utc": "…", "reason": "quit_menu|app_quit|permadeath|ending|mod_unload|recovered", "t_game": 0.0, "t_real": 0.0 },
+  "progress_start": { /* sección 3.1 */ },
+  "progress_end":   { /* sección 3.1 */ },
+  "counters": { "events": 0, "frames": 0, "inputs": 0, "dropped_frames": 0, "dropped_events": 0,
+                "write_errors": 0, "hook_errors": 0, "pd_suppressed": {} }
+}
+```
+
+- `slot`: viene de `SavegameLoadHook(int)`, **no** de `GameManager.profileID` dentro de
+  `AfterSavegameLoadHook`, porque ahí todavía tiene el valor anterior.
+- `file_sha256`: `user{slot}.dat` (el slot 0 sería `user.dat`). Se calcula en el hilo de escritura.
+- `progress_end` se toma **al entrar en `ReturnToMainMenu`** (o en `ApplicationQuitHook`).
+  Después, `QuitToMenu` llama a `playerData.Reset()` y los datos ya no sirven.
+
+### 3.1 Snapshot de progreso
+
+Lectura directa de campos de `PlayerData` (sin pasar por `GetX`, para no disparar hooks):
+`nailDamage, nailSmithUpgrades, maxHealth, maxHealthBase, heartPieces, maxMP, MPReserveMax,
+vesselFragments, fireballLevel, quakeLevel, screamLevel, hasNailArt, hasCyclone, hasDashSlash,
+hasUpwardSlash, hasDreamNail, hasDash, hasWalljump, hasSuperDash, hasShadowDash, hasAcidArmour,
+hasDoubleJump, hasKingsBrand, charmSlots, charmsOwned, gotCharm_1..40, equippedCharms[],
+geo, completionPercentage, playTime, permadeathMode, mapZone (zona de respawn), respawnScene`.
+
+`completionPercentage` solo se recalcula al guardar. Al salir al menú está al día; tras un crash
+puede no estarlo, y en ese caso se recalcula en Python. **El mod nunca llama a
+`CountGameCompletion`**, porque escribe en `PlayerData`.
+
+Además, `pd_full`: volcado completo de los ~1460 campos escalares (para la línea base de
+`pd_change`) en `session_pd_start.json.gz` y `session_pd_end.json.gz`.
+
+## 4. `events.jsonl`
+
+Una línea JSON por evento:
+
+```json
+{"seq":123,"t_game":81.234,"t_real":95.1,"frame":6012,"play_time":12034.5,"scene":"Crossroads_01","gs":"PLAYING","type":"hit_taken","p":{...}}
+```
+
+`seq` es un contador sin huecos que permite detectar pérdidas. `gs` es `GameManager.gameState`.
+`p` es el payload específico de cada tipo.
+
+### 4.1 Sesión y escenas
+
+| `type` | Payload `p` | Fuente |
+|---|---|---|
+| `session_start` | `kind` (load/new_game/…) | `SavegameLoadHook`, `On.GameManager.StartNewGame(permadeath, bossRush)`. `NewGameHook` puede dispararse 2 veces: es idempotente |
+| `session_end` | `reason` | `On.GameManager.ReturnToMainMenu` (al llamarse), `ApplicationQuitHook`, `LoadScene("PermaDeath")`, cambio a `Quit_To_Menu` sin pasar por `ReturnToMainMenu` (`EmergencyReturnToMenu`) |
+| `scene_exit` | `from, to, reason, exit_gate, entry_gate, vis, info_type, prevent_fade, first_level, respawning` | `On.GameManager.BeginSceneTransition` (antes de `orig`), además de `On.GameManager.LoadScene` y `ReturnToMainMenu` para los caminos que no usan `BeginSceneTransition` |
+| `scene_enter` | `scene, entry_gate, map_zone, scene_type, load_s` | `On.GameManager.OnNextLevelReady` (después de `orig`; se deduplica por escena). Es el único punto que alcanzan los tres caminos de carga. `load_s` sale de `SceneLoad.GetDuration` (vía `GameManager.SceneTransitionBegan`) |
+| `control_ready` | `scene` | primer `On.GameManager.FinishedEnteringScene` tras `scene_enter`. Marca cuándo el héroe acepta input. Los que llegan por *hazard respawn* se ignoran |
+| `game_state` | `from, to` | sondeo de `gameState` cada frame. `pause`/`unpause` son transiciones hacia o desde `PAUSED` **[derivado]** |
+
+> `ModHooks.SceneChanged` **no se usa**: no salta en puertas, muertes, cargas, ciervos ni
+> sueños (solo en `LoadScene`).
+
+**Clasificador de `scene_exit.reason`**, en `On.GameManager.BeginSceneTransition`, en este orden.
+El payload guarda siempre los campos crudos de `SceneLoadInfo`, así que el motivo se puede
+recalcular en Python si el clasificador se equivoca:
+
+| Orden | Condición | `reason` |
+|---|---|---|
+| 1 | flag `pending_death` (puesto en `On.HeroController.Die`), o `self.RespawningHero && !info.IsFirstLevelForPlayer` | `death` (en sueño o Godhome: `death_dream` / `death_godhome`) |
+| 2 | `info.IsFirstLevelForPlayer` y `Visualization == ContinueFromSave` | `save_load` (o `new_game_godseeker` si la sesión empezó así) |
+| 3 | `info.SceneName == "Opening_Sequence"` | `new_game` |
+| 4 | `SceneName == "Cinematic_Stag_travel"` o `EntryGateName == "door_stagExit"` | `stag` |
+| 5 | `Visualization == GodsAndGlory`, o la escena de origen o destino empieza por `GG_` | `godhome` |
+| 6 | `EntryGateName ∈ {dreamGate, door_dreamReturn}`, `Visualization ∈ {Dream, GrimmDream}` o el destino empieza por `Dream_` | `dream` |
+| 7 | flag puesto en `On.TransitionPoint.OnTriggerEnter2D` en este mismo frame | `gate`, con `exit_gate = TransitionPoint.lastEntered` |
+| 8 | existe un `TransitionPoint` en la escena activa con `targetScene == info.SceneName` y `entryPoint == info.EntryGateName` | `door` (puertas por FSM), con `exit_gate =` su nombre |
+| 9 | ninguna de las anteriores | `other` (se loguea una vez para revisarlo) |
+
+Y fuera de `BeginSceneTransition`: `quit_menu` (`ReturnToMainMenu`, con confirmación al llegar
+a `Quit_To_Menu`, porque el guardado puede abortar), `ending` (`ReturnToMainMenu` desde
+`CutsceneHelper`, o las escenas de créditos) y `permadeath`.
+
+Notas:
+- `TransitionPoint.lastEntered` **nunca se reinicia**. Para un cambio de escena hecho por FSM
+  contiene un valor viejo y solo es fiable con el flag de la regla 7.
+- Las escenas `Knight_Pickup`, `Opening_Sequence`, `Cinematic_Stag_travel` y `Quit_To_Menu`
+  generan enter y exit con `scene_type = "non_gameplay"`. Se usa una lista propia, porque
+  `IsNonGameplayScene` tiene un error: busca `"Knight Pickup"` con espacio (`GameManager.cs:2152`).
+- El nombre de escena se normaliza con `GameManager.GetBaseSceneName`, que quita los sufijos
+  `_boss` y `_preload` de las subescenas aditivas.
+
+### 4.2 Combate
+
+`hazard_type` es **el entero crudo** que usa el juego, que **no** coincide con el enum
+`HazardType` (este va desplazado en uno): 0 = buffer/otro, **1 = enemigo**, 2 = pinchos,
+3 = ácido, 4 = lava (solo genera un `Debug.Log`), 5 = foso.
+
+| `type` | Payload `p` | Fuente |
+|---|---|---|
+| `hit_taken` | `src` (nombre del GO o null), `hazard_type`, `side`, `raw_dmg`, `hp_before/after`, `blue_before/after`, `overcharmed`, `boss_level` | `On.HeroController.TakeDamage`, con lectura antes y después de `orig`. **Solo se emite si cambian `health` o `healthBlue`**: `TakeDamage` se llama en cada frame de física mientras hay contacto |
+| `hp_change_other` | `field, old, new` | `SetPlayerIntHook('health'/'healthBlue')` fuera de `TakeDamage`, por ejemplo cuando un FSM llama a `HeroController.TakeHealth` **[derivado]** |
+| `hazard_respawn` | `hazard` (enum `HazardType`), `x, y` | `On.HeroController.DieFromHazard`. `KillOnContact` llama directamente a `HeroController.HazardRespawn`, así que también se engancha `On.HeroController.HazardRespawn` y se deduplica |
+| `death` | `zone_kind` (normal/dream/godhome), `x, y`, `geo_before`, `map_zone` | `On.HeroController.Die`, deduplicado: se emite una vez por vida (`OnDeath` puede repetirse). Captura también las muertes en sueño y en Godhome, que `BeforePlayerDeadHook` no ve |
+| `shade_killed` | `geo_recovered` | `soulLimited` pasa de true a false en `SetPlayerBoolHook`, con el delta de geo **[derivado][test]** |
+| `hit_dealt` | `enemy` (bloque 4.3), `kind` (`hit`/`blocked`/`extra`), `attack_type` (AttackTypes: Nail, Generic, Spell, Acid, Splatter, RuinsWater, SharpShadow, NailBeam), `src`, `src_parent`, `dmg_dealt`, `mult`, `hp_before`, `hp_after`, `dir` | `On.HealthManager.TakeDamage` (`hit`), `On.HealthManager.Invincible` (`blocked`), `On.HealthManager.ApplyExtraDamage` (`extra`: Spore Shroom o Defender's Crest) |
+| `enemy_hp_change` | `enemy`, `hp_before`, `hp_after` | sondeo del `hp` de los `HealthManager` vivos de la sala: cubre Flukenest (`SpellFluke.cs:92`) y FSM (`SubtractHP`/`SetHP`), que restan sin pasar por `TakeDamage` |
+| `enemy_killed` | `enemy`, `attack_type`, `geo_small/med/large`, `geo_value`, `special` | `On.HealthManager.Die` (antes de `orig`, solo si `!isDead && !hasSpecialDeath` y el ataque no es Splatter ni RuinsWater). Los enemigos con `hasSpecialDeath` (muchos jefes) se recogen con `OnReceiveDeathEventHook`, deduplicado por iid, con `special: true`. Geo: `ReflectionHelper.GetField<HealthManager,int>` sobre los campos privados `smallGeoDrops`, `mediumGeoDrops` y `largeGeoDrops`, aplicando el +20% de Fragile Greed |
+| `enemy_spawn` | `enemy`, `already_dead` | `OnEnableEnemyHook` (devuelve `isAlreadyDead` sin tocar) |
+| `focus` | `phase` (`start`/`stop`), `mp` | `On.HeroController.StartMPDrain` y `StopMPDrain` **[test]** |
+| `fsm_state` | `fsm` (`Spell Control`/…), `from`, `to` | sondeo cada frame de `HeroController.spellControl.ActiveStateName`. Con esto se detectan después hechizos, focus y nail arts **[test]** |
+| `breakable` | `name`, `x, y` | `On.Breakable.Break` |
+| `boss_scene` | `phase` (`start`/`bosses_dead`/`complete`), `boss_level`, `bosses[]` | `BossSceneController.Instance` (solo Godhome): `OnBossesDead`, `OnBossSceneComplete` |
+
+### 4.3 Bloque `enemy`
+
+| Campo | Definición |
+|---|---|
+| `type` | `EnemyDeathEffects.playerDataName` (nombre del journal; campo privado). Si es vacío (`string.IsNullOrEmpty`), el nombre del GameObject normalizado (sin `(Clone)` ni ` (n)`) |
+| `name` | `gameObject.name` crudo |
+| `key` | si tiene `PersistentBoolItem`: `persistentBoolData.sceneName + "/" + id` (la misma clave que usa el juego para guardar). Si no: `escena + "/" + ruta jerárquica` |
+| `iid` | `GetInstanceID()`. Solo vale dentro de una visita y se repite si el enemigo se recicla |
+| `hp_max` | el `hp` máximo observado en la visita. No existe un campo de vida máxima: el `hp` cambia por FSM. Para los jefes de Godhome se usa `BossSceneController.BossHealthLookup` |
+
+### 4.4 Comodín `pd_change`
+
+| `type` | Payload `p` | Fuente |
+|---|---|---|
+| `pd_change` | `f` (campo), `t` (b/i/f/s/v3/var), `old`, `new`, `src` (`hook`/`diff`/`list`) | `SetPlayer{Bool,Int,Float,String,Vector3,Variable}Hook`. Dentro del hook el campo todavía guarda el valor anterior, así que se lee directamente (`PlayerData.instance.<campo>` compila a `ldfld`, sin hooks). **Solo se emite si el valor cambia.** Los hooks devuelven siempre su entrada sin tocar |
+| `pd_change` (`src: diff`) | igual | diff a 1 Hz de los ~1460 campos escalares contra una copia en caché, con delegados tipados compilados en `Initialize` (sin boxing). Cubre lo que no pasa por hooks: `SetupNewPlayerData`, `AddGGPlayerDataOverrides`, `Reset`, `UpgradeSaveData` y la deserialización al cargar |
+| `pd_list` | `f`, `added[]`, `removed[]` | diff a 1 Hz de las 15 listas que se modifican in situ sin hook: `scenesVisited`, `scenesMapped`, `equippedCharms`, `unlockedBossScenes`, `scenesEncountered*`, `scenesGrubRescued`, `scenesFlameCollected`… |
+
+- **Nunca** se suscribe un `Get*Hook`: todas las lecturas del juego pasan por ellos.
+- El nombre se valida contra la tabla de campos: los FSM pueden escribir nombres que no existen.
+  Se cuentan una vez y no se emiten.
+- Límite por campo: N cambios por segundo, con contador en `session.counters.pd_suppressed`.
+  La lista negra se decide al final de la fase 3, con datos reales.
+- Campos con trampa: `killsX` **cuenta hacia abajo** (lo que falta para completar el journal),
+  y `mapZone` es la zona **de respawn**, no la actual.
+- `item_pickup`, `bench_rest`, `shade_killed` y similares se derivan en Python a partir de
+  `pd_change` (`gotCharm_N`, `has*`, `heartPieces`, `vesselFragments`, `atBench`…).
+
+### 4.5 Objetos persistentes
+
+| `type` | Payload `p` | Fuente |
+|---|---|---|
+| `scene_object` | `kind` (`bool`/`int`/`georock`), `id`, `obj_scene`, `old`, `new`, `trigger` | diccionario sombra `(escena, id, tipo) → valor`, sembrado desde `SceneData.instance` al cargar o empezar partida, y comparado en `On.SceneData.SaveMyState_PersistentBoolData`, `SaveMyState_PersistentIntData` y `SaveMyState_GeoRockData` |
+
+⚠ **`t_*` es el momento observado, no el de la interacción.** El juego guarda en bloque al salir
+de la escena, al guardar o tras un *hazard respawn*. La excepción son los enemigos, que se
+guardan al morir. Para tener el momento exacto: `breakable` (en vivo) y la muerte del enemigo.
+Los muros y palancas por FSM solo tienen resolución de salida de sala. **[test]**: comprobar que
+los objetos que se desactivan solos se guardan.
+
+### 4.6 Sistema
+
+| `type` | Payload `p` | Fuente |
+|---|---|---|
+| `device` | `from, to` | sondeo de `inputActions.LastInputType` (`KeyBindingSource`/`MouseBindingSource` = teclado, `DeviceBindingSource` = mando) |
+| `perf` | `fps_avg, fps_min, dt_max_ms, q_events, q_frames` | cada 1 s de tiempo real |
+| `writer` | `status` (`ok`/`error`/`dropping`), `msg` | hilo de escritura |
+
+## 5. `frames.csv`
+
+Muestreo a `sample_hz` (30 por defecto) desde un `MonoBehaviour` propio con `DontDestroyOnLoad`
+y acumulador de `unscaledDeltaTime`. Como mucho una muestra por frame. Solo se muestrea si
+`HeroController.UnsafeInstance != null`; cuando no hay héroe se escribe una fila con `gap=1`.
+
+| Columna | Tipo | Fuente |
+|---|---|---|
+| `seq, t_game, t_real, frame` | | sección 2 |
+| `scene` | str | escena base |
+| `gs` | int | `gameState` (0 = INACTIVE, …, 4 = PLAYING, 5 = PAUSED…) |
+| `x, y` | float | `hc.transform.position` |
+| `vx, vy` | float | `Rigidbody2D.velocity`. El componente se guarda en caché con `GetComponent` y se renueva cuando cambia la instancia (`rb2d` es privado) |
+| `hp, hp_max, blue` | int | `pd.health`, `pd.CurrentMaxHealth` (tiene en cuenta los *bindings* de Godhome), `pd.healthBlue` |
+| `soul, soul_reserve` | int | `pd.MPCharge`, `pd.MPReserve` |
+| `hero_state` | int | `hc.hero_state` (ActorStates: grounded, idle, running, airborne, wall_sliding, hard_landing, dash_landing, no_input, previous) |
+| `cstate` | int64 | máscara de bits de los 55 bools de `cState`, en el orden de la sección 5.1 |
+| `facing` | int | 1 si `cState.facingRight`, −1 si no |
+| `accepting` | int | `hc.acceptingInput && !hc.controlReqlinquished && !gm.isPaused` |
+| `time_scale` | float | `Time.timeScale` (permite ver el *hit-stop*) |
+| `input_bitmask` | int | acciones pulsadas en algún momento desde la muestra anterior (OR acumulado cada frame) |
+| `move_x, move_y` | float | `inputActions.moveVector.X/Y` |
+| `gap` | int | 1 si no hay héroe (menú, cinemáticas) |
+
+Las columnas `hp`/`soul` se reconstruyen fácilmente a partir de `pd_change`, pero se mantienen
+porque son lo que más se usa en el análisis.
+
+### 5.1 Bits de `cstate` (orden de `HeroControllerStates`)
+
+0 facingRight, 1 onGround, 2 jumping, 3 wallJumping, 4 doubleJumping, 5 nailCharging,
+6 shadowDashing, 7 swimming, 8 falling, 9 dashing, 10 superDashing, 11 superDashOnWall,
+12 backDashing, 13 touchingWall, 14 wallSliding, 15 transitioning, 16 attacking, 17 lookingUp,
+18 lookingDown, 19 lookingUpAnim, 20 lookingDownAnim, 21 altAttack, 22 upAttacking,
+23 downAttacking, 24 bouncing, 25 shroomBouncing, 26 recoilingRight, 27 recoilingLeft, 28 dead,
+29 hazardDeath, 30 hazardRespawning, 31 willHardLand, 32 recoilFrozen, 33 recoiling,
+34 invulnerable, 35 casting, 36 castRecoiling, 37 preventDash, 38 preventBackDash, 39 dashCooldown,
+40 backDashCooldown, 41 nearBench, 42 inWalkZone, 43 isPaused, 44 onConveyor, 45 onConveyorV,
+46 inConveyorZone, 47 spellQuake, 48 freezeCharge, 49 focusing, 50 inAcid, 51 slidingLeft,
+52 slidingRight, 53 touchingNonSlider, 54 wasOnGround.
+
+## 6. `inputs.csv`
+
+Sondeo **cada frame** de `InputHandler.Instance.inputActions`. La referencia se vuelve a leer
+en cada frame, porque `InputHandler.Start` la recrea. Se emite una fila en cada transición de
+`IsPressed`; la detección de flanco es propia, sin depender de `WasPressed`, que dura un solo
+tick de InControl. Para el eje se emite una fila cuando `moveVector` cambia más de 0,2 en X o en Y.
+
+| Columna | Definición |
+|---|---|
+| `seq, t_game, t_real, frame` | sección 2 |
+| `action` | nombre de la acción (sección 6.1) |
+| `ev` | `down`, `up` o `axis` |
+| `x, y` | solo en `axis` |
+| `device` | `kb` o `pad`, según `LastInputType` |
+| `accepting` | 1 si el héroe estaba aceptando input (para separar las pulsaciones que el juego ignoró) |
+
+### 6.1 Acciones y bits de `input_bitmask`
+
+0 left, 1 right, 2 up, 3 down, 4 jump, 5 attack, 6 dash, 7 superDash, 8 cast, 9 quickCast,
+10 focus, 11 dreamNail, 12 quickMap, 13 openInventory, 14 pause, 15 evade.
+(Campos de `HeroActions`. InControl está compilado dentro de `Assembly-CSharp`.)
+
+## 7. `scenes/<scene>.json`
+
+Se genera en el primer `scene_enter` de cada escena en la sesión, desde
+`On.GameManager.OnNextLevelReady` (después de `orig`: ya son válidos `sm`, `tilemap` y
+`sceneWidth`), con un frame de retraso.
+
+```jsonc
+{
+  "schema_version": 1, "scene": "Crossroads_01", "captured_t_game": 81.2,
+  "size": { "w": 120, "h": 60 },                       // GameManager.sceneWidth/Height (tiles = unidades; origen abajo-izquierda)
+  "scene_manager": { "map_zone": "CROSSROADS", "scene_type": "GAMEPLAY", "is_windy": false, "is_tremor": false,
+                     "environment": 0, "darkness": 0, "no_lantern": false },  // global::SceneManager
+  "gates": [ { "name": "right1", "pos": [x,y], "target_scene": "…", "entry_point": "…", "is_door": false,
+               "position": "right" } ],                // TransitionPoint.TransitionPoints filtrado por escena activa
+  "enemies": [ { "name": "…", "type": "…", "key": "…", "pos": [x,y], "hp": 15, "active": true,
+                 "is_dead": false, "persistent_id": "…|null", "geo": [s,m,l] } ],
+  "hazards": [ { "name": "…", "kind": "damage_hero|fsm", "hazard_type": 2, "damage": 1,
+                 "bounds": [xmin,ymin,xmax,ymax] } ],
+  "benches": [ { "name": "…", "pos": [x,y] } ],         // RestBench
+  "respawn_points": [ { "name": "…", "pos": [x,y] } ],  // tag RespawnPoint
+  "hazard_respawn_triggers": [ { "pos": [x,y] } ],
+  "persistent": [ { "kind": "bool|int|georock", "id": "…", "name": "…", "pos": [x,y], "value": 0, "fsm": "…|null" } ],
+  "breakables": [ { "name": "…", "pos": [x,y] } ],
+  "battle_scenes": [ { "name": "…", "pos": [x,y] } ],   // PlayMakerFSM con FsmName "Battle Control"
+  "scene_data_saved": { "bool": {"id": true}, "int": {"id": 2}, "georock": {"id": 0} }  // SceneData.instance para esta escena
+}
+```
+
+- Enemigos y objetos se buscan **incluidos los inactivos** (`FindObjectsOfType<T>(true)`,
+  filtrando por `gameObject.scene`). Los enemigos ya muertos y los de arena empiezan inactivos.
+- Peligros: `DamageHero` con `hazardType >= 2` **y** los GameObjects con un FSM `damages_hero`,
+  del que se leen sus enteros `hazardType` y `damageDealt` (`HeroBox.cs:47-58`).
+- Una escena se cataloga una vez por sesión. En Python se deduplica por escena y versión de esquema.
+
+## 8. Mapas de enums usados
+
+- `GameState`: 0 INACTIVE, 1 MAIN_MENU, 2 LOADING, 3 ENTERING_LEVEL, 4 PLAYING, 5 PAUSED,
+  6 EXITING_LEVEL, 7 CUTSCENE, 8 PRIMER.
+- `SceneLoadVisualizations`: −1 Custom, 0 Default, 1 Dream, 2 Colosseum, 3 GrimmDream,
+  4 ContinueFromSave, 5 GodsAndGlory.
+- `HazardType` (enum, solo en `hazard_respawn.hazard`): 0 NON_HAZARD, 1 SPIKES, 2 ACID, 3 LAVA, 4 PIT.
+- `CollisionSide`: top, left, right, bottom, other.
+
+## 9. Pendiente de prueba en el juego
+
+| # | Qué | Cómo |
+|---|---|---|
+| T1 | Las puertas (FSM) llegan por `BeginSceneTransition` y la regla 8 identifica la gate | entrar en la tienda de Sly o en un ascensor |
+| T2 | Ciervo: secuencia de transiciones y motivo | viajar entre dos estaciones |
+| T3 | Sueño: entrada con el aguijón onírico, muerte dentro, Dream Gate | cadáver del Falso Caballero |
+| T4 | Banco: `atBench` true/false y `respawn*` en `pd_change` | sentarse y levantarse |
+| T5 | Muerte, sombra y su recuperación: orden de `geoPool`, `soulLimited` y `geo` | morir y matar la sombra |
+| T6 | Hechizos, focus y nail arts: nombres de estado de `Spell Control` y `Source.name` de cada ataque | lanzar cada hechizo y cada nail art; curarse y cancelar |
+| T7 | Muros y palancas: `scene_object` al salir de la sala | romper un muro en Crossroads |
+| T8 | `FindObjectsOfType<T>(true)` compila contra Unity 2020.2 | `dotnet build` |
+| T9 | Arenas: estados del FSM `Battle Control` | arena de aspids de Crossroads |
+
+## Changelog
+
+- **v1** (16/11/2026): esquema inicial, verificado contra el código descompilado de la 1.5.78.

@@ -1,0 +1,20 @@
+# Build
+bin/
+obj/
+*.user
+.vs/
+.vscode/
+.idea/
+
+# Material de referencia (no se versiona)
+reference/
+
+# Datos de sesión de prueba y exportaciones
+sessions/
+*.zip
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.parquet
