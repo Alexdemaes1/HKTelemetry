@@ -169,7 +169,67 @@ def check_events(folder: Path, s: dict | None, r: Report) -> None:
         r.warn(f"counters.events={s['counters']['events']} pero hay {len(events)} líneas")
 
     check_scene_sequence(events, r)
+    check_gameplay(events, r)
     summarize_perf(events, r)
+    check_pd_files(folder, s, r)
+
+
+KNOWN_TYPES = {
+    "session_start", "session_end", "scene_exit", "scene_enter", "control_ready", "game_state", "perf",
+    "hit_taken", "hazard_respawn", "death", "hit_dealt", "enemy_hp_change", "enemy_killed", "enemy_spawn",
+    "focus", "fsm_state", "boss_scene", "env_break", "pd_change", "pd_list", "boss_defeated",
+    "ability_gained", "item_got",
+}
+
+
+def check_gameplay(events: list[dict], r: Report) -> None:
+    """Fases 2 y 3: coherencia básica de combate y PlayerData, y resumen para el perfilado."""
+    unknown = Counter(e["type"] for e in events if e["type"] not in KNOWN_TYPES)
+    if unknown:
+        r.warn("tipos de evento desconocidos: " + ", ".join(f"{k}={v}" for k, v in unknown.items()))
+
+    for e in events:
+        t, p = e["type"], e.get("p") or {}
+        if t == "hit_dealt" and p.get("kind") == "hit" and p.get("hp_after", 0) > p.get("hp_before", 0):
+            r.warn(f"seq={e['seq']} hit_dealt con hp que sube ({p.get('hp_before')}->{p.get('hp_after')})")
+        elif t == "hit_taken" and p.get("hp_after", 0) + p.get("blue_after", 0) >= p.get("hp_before", 0) + p.get("blue_before", 0):
+            r.warn(f"seq={e['seq']} hit_taken sin perder vida")
+        elif t == "pd_change" and p.get("old") == p.get("new"):
+            r.err(f"seq={e['seq']} pd_change sin cambio en {p.get('f')}")
+        elif t in ("hit_dealt", "enemy_killed", "enemy_spawn", "enemy_hp_change"):
+            enemy = p.get("enemy") or {}
+            if not enemy.get("type") or not enemy.get("key"):
+                r.err(f"seq={e['seq']} {t} sin enemy.type/key")
+
+    c = Counter(e["type"] for e in events)
+    deaths = c["death"]
+    r.info.append(
+        f"combate: golpes dados={sum(1 for e in events if e['type']=='hit_dealt' and e['p'].get('kind')=='hit')} "
+        f"recibidos={c['hit_taken']} enemigos muertos={c['enemy_killed']} muertes={deaths} "
+        f"hazards={c['hazard_respawn']} curas={sum(1 for e in events if e['type']=='focus' and e['p'].get('phase')=='start')} "
+        f"entorno roto={c['env_break']}"
+    )
+    r.info.append(f"PlayerData: pd_change={c['pd_change']} pd_list={c['pd_list']}")
+    for t in ("boss_defeated", "ability_gained", "item_got"):
+        found = [e["p"].get("boss") or e["p"].get("field") for e in events if e["type"] == t]
+        if found:
+            r.info.append(f"{t}: " + ", ".join(found))
+
+
+def check_pd_files(folder: Path, s: dict | None, r: Report) -> None:
+    for name in ("pd_start.json.gz", "pd_end.json.gz"):
+        path = folder / name
+        if not path.exists():
+            if s and s.get("progress_start") is not None:
+                r.warn(f"falta {name}")
+            continue
+        try:
+            with gzip.open(path, "rt", encoding="utf-8") as f:
+                n = len(json.load(f).get("fields", {}))
+            if n < 1000:
+                r.err(f"{name} solo tiene {n} campos")
+        except (OSError, json.JSONDecodeError) as e:
+            r.err(f"{name} ilegible: {e}")
 
 
 def summarize_perf(events: list[dict], r: Report) -> None:

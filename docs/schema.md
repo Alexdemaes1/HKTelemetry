@@ -85,8 +85,10 @@ geo, completionPercentage, playTime, permadeathMode, mapZone (zona de respawn), 
 puede no estarlo, y en ese caso se recalcula en Python. **El mod nunca llama a
 `CountGameCompletion`**, porque escribe en `PlayerData`.
 
-Además, `pd_full`: volcado completo de los ~1460 campos escalares (para la línea base de
-`pd_change`) en `session_pd_start.json.gz` y `session_pd_end.json.gz`.
+Además, volcado completo de los 1525 campos públicos de `PlayerData` en `pd_start.json.gz` (primer `control_ready`,
+que es también la línea base de `pd_change`) y `pd_end.json.gz` (al pedir volver al menú y tras su guardado):
+`{schema_version, session_id, t_game, fields: {...}}`. Los tipos no primitivos se serializan solo con sus campos
+públicos y profundidad máxima 3.
 
 ### 3.2 Experiencia previa (automática, no se pregunta al jugador)
 
@@ -206,7 +208,9 @@ Notas:
 - **Nunca** se suscribe un `Get*Hook`: todas las lecturas del juego pasan por ellos.
 - El nombre se valida contra la tabla de campos: los FSM pueden escribir nombres que no existen.
   Se cuentan una vez y no se emiten.
-- Límite por campo: N cambios por segundo, con contador en `session.counters.pd_suppressed`.
+- Límite por campo: 30 cambios por segundo, con contador en `session.counters.pd_suppressed`
+  (p. ej. `MPCharge` durante una curación). Nombres inexistentes: `session.counters.pd_unknown_fields`.
+- Coste medido fuera del juego: barrido de 40 campos por frame ≈ 0,7 µs; línea base completa ≈ 14 µs.
   La lista negra se decide al final de la fase 3, con datos reales.
 - Campos con trampa: `killsX` **cuenta hacia abajo** (lo que falta para completar el journal),
   y `mapZone` es la zona **de respawn**, no la actual.

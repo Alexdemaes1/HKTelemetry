@@ -49,6 +49,9 @@ namespace HKTelemetry
                 SessionManager.Init();
                 Runner.Create();
                 SceneRecorder.Hook();
+                CombatRecorder.Hook();
+                EnvRecorder.Hook();
+                PlayerDataRecorder.Hook();
                 Log($"Grabando en {SessionManager.Root}");
             }
             catch (Exception e)

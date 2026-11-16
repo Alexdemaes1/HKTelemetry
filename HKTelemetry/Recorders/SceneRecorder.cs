@@ -189,6 +189,7 @@ namespace HKTelemetry.Recorders
                 _pendingDeathZone = zone == MapZone.DREAM_WORLD ? "death_dream"
                                   : zone == MapZone.GODS_GLORY ? "death_godhome"
                                   : "death";
+                CombatRecorder.RecordDeath(self, _pendingDeathZone);
             });
             return orig(self);
         }
@@ -345,6 +346,8 @@ namespace HKTelemetry.Recorders
                     .End());
                 _pendingTransition = false;
                 _awaitingControl = true;
+                CombatRecorder.OnSceneEnter();
+                EnvRecorder.OnSceneEnter();
 
                 // En Dream Gate y en el respawn tras morir, el juego da el control (EnterHero →
                 // FinishedEnteringScene) antes de OnNextLevelReady: se emite ahora, marcado como early.
@@ -373,6 +376,8 @@ namespace HKTelemetry.Recorders
             _awaitingControl = false;
             SessionManager.Emit("control_ready", new Json().S("scene", CurrentScene).B("early", early).End());
             SessionManager.TakeProgressStartIfNeeded();
+            CombatRecorder.OnControlReady();
+            PlayerDataRecorder.SeedAndDump();
         }
 
         // ---------------- sondeo por frame (desde el Runner) ----------------

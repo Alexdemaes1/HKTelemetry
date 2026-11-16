@@ -99,6 +99,8 @@ namespace HKTelemetry.Session
             Safe.Run("session.experience", () => s.Experience.Collect(gm));
 
             SceneRecorder.OnSessionStart();
+            CombatRecorder.OnSessionStart();
+            PlayerDataRecorder.OnSessionStart();
             Emit("session_start", new Json().S("kind", kind).I("slot", slot).S("launch_id", LaunchId).End());
             WriteSessionJson();
 
@@ -130,6 +132,7 @@ namespace HKTelemetry.Session
         {
             if (_s == null) return;
             _s.ProgressEnd = ProgressSnapshot.Take(PlayerData.instance);
+            Safe.Run("session.pd_end", PlayerDataRecorder.DumpEnd);
         }
 
         public static void End(string reason, bool appQuit)
@@ -223,6 +226,8 @@ namespace HKTelemetry.Session
                         ["hook_errors"] = Safe.ErrorCount - s.HookErrorsAtStart,
                     },
                 };
+                var counters = (Dictionary<string, object>)doc["counters"];
+                foreach (var kv in PlayerDataRecorder.Counters()) counters[kv.Key] = kv.Value;
                 string text = JsonConvert.SerializeObject(doc, Formatting.Indented);
                 string path = Path.Combine(s.Dir, "session.json");
                 w.Job(() => TelemetryWriter.WriteAtomic(path, text));

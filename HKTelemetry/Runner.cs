@@ -39,6 +39,8 @@ namespace HKTelemetry
                     if (SessionManager.Active) Clock.Tick(gm);
                     SceneRecorder.Poll(gm);
                 }
+                CombatRecorder.Poll(HeroController.UnsafeInstance);
+                PlayerDataRecorder.Poll();
                 SessionManager.Tick();
             });
             Safe.Drain(msg => HKTelemetry.Instance?.Log(msg));
