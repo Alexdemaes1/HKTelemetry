@@ -32,6 +32,8 @@ namespace HKTelemetry.Recorders
         private static double _exitTReal;
         private static string _pendingDeathZone;    // puesto en HeroController.Die; lo consume el siguiente scene_exit
         private static int _gateTriggerFrame = -1;  // frame en que TransitionPoint.OnTriggerEnter2D disparó
+        private static int _fsmTransitionFrame = -1; // frame en que la acción PlayMaker BeginSceneTransition disparó
+        private static string _fsmOwner;            // GameObject dueño de ese FSM (la puerta, el ascensor...)
         private static string _quitReason;          // quit_menu / ending mientras se vuelve al menú
         private static GameState? _lastState;
         private static bool _lastPaused;
@@ -51,6 +53,8 @@ namespace HKTelemetry.Recorders
             On.GameManager.FinishedEnteringScene += OnFinishedEnteringScene;
             On.GameManager.ReturnToMainMenu += OnReturnToMainMenu;
             On.TransitionPoint.OnTriggerEnter2D += OnTransitionTrigger;
+            On.HutongGames.PlayMaker.Actions.BeginSceneTransition.OnEnter += OnFsmBeginSceneTransition;
+            On.HutongGames.PlayMaker.Actions.LoadLevel.OnEnter += OnFsmLoadLevel;
             On.HeroController.Die += OnHeroDie;
             USM.activeSceneChanged += OnActiveSceneChanged;
         }
@@ -134,6 +138,47 @@ namespace HKTelemetry.Recorders
             orig(self, movingObj);
         }
 
+        /// <summary>
+        /// Puertas y ascensores por FSM (sin TransitionPoint): usan la acción PlayMaker BeginSceneTransition.
+        /// Se marca el frame y se guarda el GameObject dueño como nombre de la puerta.
+        /// </summary>
+        private static void OnFsmBeginSceneTransition(On.HutongGames.PlayMaker.Actions.BeginSceneTransition.orig_OnEnter orig,
+            HutongGames.PlayMaker.Actions.BeginSceneTransition self)
+        {
+            Safe.Run("scene.fsm_bst", () =>
+            {
+                _fsmTransitionFrame = Time.frameCount;
+                var owner = self.Owner;
+                _fsmOwner = owner != null ? owner.name : null;
+            });
+            orig(self);
+        }
+
+        /// <summary>
+        /// La acción PlayMaker LoadLevel carga con Unity directamente, sin pasar por GameManager.
+        /// La usa la estación de ciervo para ir a Cinematic_Stag_travel (Player.log: "LoadLevel: Cinematic_Stag_travel").
+        /// </summary>
+        private static void OnFsmLoadLevel(On.HutongGames.PlayMaker.Actions.LoadLevel.orig_OnEnter orig,
+            HutongGames.PlayMaker.Actions.LoadLevel self)
+        {
+            Safe.Run("scene.fsm_load", () =>
+            {
+                if (!SessionManager.Active || self.additive) return; // aditiva = no cambia de sala
+                string to = self.levelName != null ? self.levelName.Value : null;
+                if (string.IsNullOrEmpty(to)) return;
+                var owner = self.Owner;
+                SessionManager.Emit("scene_exit", new Json()
+                    .S("from", CurrentScene)
+                    .S("to", to)
+                    .S("reason", to == "Cinematic_Stag_travel" ? "stag" : IsEndingScene(to) ? "ending" : "fsm_load")
+                    .S("exit_gate", owner != null ? owner.name : null)
+                    .S("info_type", "PlayMaker.LoadLevel")
+                    .End());
+                MarkExit();
+            });
+            orig(self);
+        }
+
         private static IEnumerator OnHeroDie(On.HeroController.orig_Die orig, HeroController self)
         {
             Safe.Run("scene.die", () =>
@@ -208,6 +253,12 @@ namespace HKTelemetry.Recorders
             {
                 reason = "door";
             }
+            else if (_fsmTransitionFrame == Time.frameCount)
+            {
+                // Puerta/ascensor por FSM sin TransitionPoint (p. ej. estación de ciervo, cabaña del Chamán).
+                reason = "door";
+                exitGate = _fsmOwner;
+            }
             else
             {
                 reason = "other";
@@ -266,6 +317,16 @@ namespace HKTelemetry.Recorders
                 if (!SessionManager.Active) return;
                 string scene = BaseName(USM.GetActiveScene().name);
                 if (!_pendingTransition && scene == CurrentScene) return; // duplicado del mismo cambio
+
+                if (!_pendingTransition)
+                {
+                    // Cambio de sala por un camino no enganchado: se emite la salida ahora (tiempo = llegada)
+                    // para que cada scene_enter tenga su scene_exit. Así se ve y se puede corregir.
+                    SessionManager.Emit("scene_exit", new Json()
+                        .S("from", CurrentScene).S("to", scene).S("reason", "unhooked")
+                        .S("entry_gate", self.entryGateName).B("synthetic", true).End());
+                    MarkExit();
+                }
 
                 string mapZone = null, sceneType = null;
                 if (self.sm != null)

@@ -53,7 +53,15 @@
   <Target Condition="'$(Configuration)' == 'Debug'" Name="CopyMod" AfterTargets="PostBuildEvent">
     <RemoveDir Condition="Exists('$(ModsPath)/$(TargetName)')" Directories="$(ModsPath)/$(TargetName)" />
     <MakeDir Directories="$(ModsPath)/$(TargetName)" />
-    <Copy SourceFiles="$(TargetPath);$(TargetDir)/$(TargetName).pdb" DestinationFolder="$(ModsPath)/$(TargetName)" />
+    <Copy SourceFiles="$(TargetPath);$(TargetDir)/$(TargetName).pdb" DestinationFolder="$(ModsPath)/$(TargetName)" ContinueOnError="true" />
+    <!-- Si el juego está abierto la DLL está bloqueada y la copia puede fallar en silencio: comprobarlo. -->
+    <GetFileHash Files="$(TargetPath)">
+      <Output TaskParameter="Hash" PropertyName="BuiltHash" />
+    </GetFileHash>
+    <GetFileHash Files="$(ModsPath)/$(TargetName)/$(TargetFileName)" Condition="Exists('$(ModsPath)/$(TargetName)/$(TargetFileName)')">
+      <Output TaskParameter="Hash" PropertyName="InstalledHash" />
+    </GetFileHash>
+    <Error Condition="'$(BuiltHash)' != '$(InstalledHash)'" Text="La DLL no se ha copiado a $(ModsPath)/$(TargetName). ¿Está el juego abierto? Ciérralo y vuelve a compilar." />
     <!-- Uncomment this if you have the game installed on Steam, Steam is in your PATH environment variable, and you want to run the game upon build. -->
     <!-- Exec Command="steam steam://rungameid/367520" / -->
   </Target>

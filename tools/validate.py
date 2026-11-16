@@ -23,7 +23,7 @@ DEFAULT_ROOT = Path(os.environ.get("USERPROFILE", "~")).expanduser() / "AppData/
 
 COMMON_FIELDS = ("seq", "t_game", "t_real", "frame", "scene", "type", "p")
 EXIT_REASONS = {
-    "death", "death_dream", "death_godhome", "save_load", "new_game", "new_game_godseeker", "stag", "dream_gate",
+    "death", "death_dream", "death_godhome", "save_load", "new_game", "new_game_godseeker", "stag", "dream_gate", "fsm_load", "unhooked",
     "godhome", "dream", "gate", "door", "other", "quit_menu", "ending", "permadeath", "cutscene",
 }
 END_REASONS = {"quit_menu", "ending", "menu", "emergency_menu", "permadeath", "app_quit", "restarted", "recovered"}
@@ -210,7 +210,7 @@ def check_scene_sequence(events: list[dict], r: Report) -> None:
             reasons[reason] += 1
             if reason not in EXIT_REASONS:
                 r.err(f"seq={e['seq']} motivo de salida desconocido: {reason}")
-            if reason == "other":
+            if reason in ("other", "unhooked") and not is_non_gameplay(p.get("from")):
                 r.warn(f"seq={e['seq']} salida sin clasificar {p.get('from')}→{p.get('to')} "
                        f"(entry_gate={p.get('entry_gate')}, vis={p.get('vis')})")
             if pending_exit is not None and pending_exit["p"].get("reason") not in ("quit_menu", "ending"):

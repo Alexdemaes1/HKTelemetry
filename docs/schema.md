@@ -144,9 +144,10 @@ recalcular en Python si el clasificador se equivoca:
 | 6 | `EntryGateName == door_dreamReturn`, `Visualization ∈ {Dream, GrimmDream}` o el destino empieza por `Dream_` | `dream` |
 | 7 | flag puesto en `On.TransitionPoint.OnTriggerEnter2D` en este mismo frame | `gate`, con `exit_gate = TransitionPoint.lastEntered` |
 | 8 | existe un `TransitionPoint` en la escena activa con `targetScene == info.SceneName` y `entryPoint == info.EntryGateName` | `door` (puertas por FSM), con `exit_gate =` su nombre |
+| 8b | la acción PlayMaker `BeginSceneTransition` se ejecutó en este mismo frame (puertas y ascensores sin `TransitionPoint`: estación de ciervo, cabaña del Chamán…) | `door`, con `exit_gate =` el GameObject dueño del FSM |
 | 9 | ninguna de las anteriores | `other` (se loguea una vez para revisarlo) |
 
-Y fuera de `BeginSceneTransition`: `quit_menu` (`ReturnToMainMenu`, con confirmación al llegar
+Y fuera de `BeginSceneTransition`: `stag` / `fsm_load` cuando un FSM usa la acción PlayMaker `LoadLevel`, que carga con Unity directamente (así sale la estación de ciervo hacia `Cinematic_Stag_travel`); `unhooked` (con `synthetic: true`) si llega un `scene_enter` a otra sala sin salida registrada: se emite la salida en ese momento para que todo `scene_enter` tenga su `scene_exit`; `quit_menu` (`ReturnToMainMenu`, con confirmación al llegar
 a `Quit_To_Menu`, porque el guardado puede abortar), `ending` (`ReturnToMainMenu` desde
 `CutsceneHelper`, o las escenas de créditos) y `permadeath`.
 
