@@ -21,6 +21,24 @@ Verificación de la API contra el código, con referencias `archivo:línea`: [ap
 | `GodhomeWinLossTracker` | ⏳ falta el enlace |
 | Proyecto C# | ✅ `HKTelemetry/` (plantilla `hksettings`). `dotnet build` copia la DLL a `Managed/Mods/HKTelemetry/`. Ruta del juego sobrescribible con `-p:HKManaged=...` |
 
+### Avance por fases (17/11/2026)
+
+| Fase | Estado |
+|---|---|
+| 0 | ✅ cerrada |
+| 1 | 🟡 código hecho y probado en 2 sesiones. Corregidos: Dream Gate, ciervo (`LoadLevel`), puertas FSM, `control_ready` temprano. **Falta confirmarlo en el juego con la DLL nueva** |
+| 2–8 | ⏳ pendientes |
+
+**Abierto:** input lag percibido. El juego va a ~178 fps con vsync a 180 Hz. El evento `perf` mide el coste del mod por frame; falta una sesión con la DLL nueva para tener el número.
+
+### Perfilado de jugadores (agresivo / pasivo / explorador…)
+
+Objetivo añadido el 17/11/2026. No hace falta ningún evento «de perfil»: se calcula en Python a partir de los datos crudos.
+- **Agresividad:** ataques por minuto (inputs), golpes dados/recibidos, enemigos matados frente a enemigos presentes en la sala (catálogo), tiempo cerca de enemigos, uso de hechizos.
+- **Riesgo:** seguir jugando con poca vida, muertes, curaciones canceladas, *hazard respawns*.
+- **Exploración y destrucción:** `env_break` (objetos y hierba), salas nuevas frente a repetidas, tiempo por sala, `scene_object` (muros secretos).
+- **Progresión:** `boss_defeated`, `ability_gained`, `item_got` con su `t_game`.
+
 ## Fase 0: lo que queda
 
 1. **Prueba en el juego:** el mod aparece en el menú de mods y `ModLog.txt` muestra la línea
@@ -70,8 +88,8 @@ Reglas (verificadas en el código):
 | Fase | Contenido | Hooks principales (verificados) | Criterio de "hecho" |
 |---|---|---|---|
 | 1 | Writer, `Runner`, sesión, `session.json`, `scene_exit`/`scene_enter`/`control_ready`/`game_state`, `validate.py` mínimo | `SavegameLoadHook`, `On.GameManager.StartNewGame`, `On.GameManager.BeginSceneTransition`, `On.GameManager.OnNextLevelReady`, `On.GameManager.FinishedEnteringScene`, `On.GameManager.ReturnToMainMenu`, `On.GameManager.LoadScene`, `On.TransitionPoint.OnTriggerEnter2D`, `On.HeroController.Die` (flag), `ApplicationQuitHook` | 5 min de juego (gate, puerta, banco, muerte, ciervo, sueño, salir al menú): la secuencia y los motivos cuadran. Pruebas T1–T3 |
-| 2 | `hit_taken`, `hazard_respawn`, `death`, `hit_dealt`, `enemy_hp_change`, `enemy_killed`, `enemy_spawn`, `focus`, `fsm_state`, `breakable`, `boss_scene` | `On.HeroController.TakeDamage/DieFromHazard/HazardRespawn/Die/StartMPDrain/StopMPDrain`, `On.HealthManager.TakeDamage/Invincible/ApplyExtraDamage/Die`, `OnReceiveDeathEventHook`, `RecordKillForJournalHook`, `OnEnableEnemyHook`, `On.Breakable.Break` | Golpes y muertes cuadran con un vídeo del mismo tramo. Pruebas T5, T6 |
-| 3 | `pd_change` (hooks + diff a 1 Hz) y `pd_list`. Snapshots de progreso | `SetPlayer{Bool,Int,Float,String,Vector3,Variable}Hook`, tabla de ~1460 campos con delegados tipados | Aparecen geo, amuletos, mapas, llaves… con old/new correctos. Prueba T4. Se decide la lista negra |
+| 2 | `hit_taken`, `hazard_respawn`, `death`, `hit_dealt`, `enemy_hp_change`, `enemy_killed`, `enemy_spawn`, `focus`, `fsm_state`, `boss_scene` + **entorno roto (`env_break`)**: objetos rompibles, postes, hierba cortada, enredaderas | `On.HeroController.TakeDamage/DieFromHazard/HazardRespawn/Die/StartMPDrain/StopMPDrain`, `On.HealthManager.TakeDamage/Invincible/ApplyExtraDamage/Die`, `OnReceiveDeathEventHook`, `RecordKillForJournalHook`, `OnEnableEnemyHook`; entorno: `On.Breakable.Break`, `On.BreakablePole.Hit`, `On.Grass.Hit`, `On.GrassBehaviour.CutReact`, `On.VinePlatformCut.Cut` | Golpes, muertes y objetos rotos cuadran con un vídeo del mismo tramo. Pruebas T5, T6 |
+| 3 | `pd_change` (hooks + diff a 1 Hz) y `pd_list`. Snapshots de progreso. **Eventos derivados en el propio mod:** `boss_defeated` (bools de PlayerData que pasan a true y cuyo nombre es de jefe: `*Defeated`, `defeated*`, `killedFinalBoss`…, ~30 campos detectados por patrón), `ability_gained` (`has*` de habilidades, niveles de hechizo `fireballLevel/quakeLevel/screamLevel`, nail arts, aguijón onírico), `item_got` (amuletos `gotCharm_N`, fragmentos de máscara y de vaso, mejoras de aguijón, llaves, reliquias) | `SetPlayer{Bool,Int,Float,String,Vector3,Variable}Hook`, tabla de ~1460 campos con delegados tipados | Aparecen geo, amuletos, mapas, llaves… con old/new correctos; el Falso Caballero sale como `boss_defeated` y Vengeful Spirit como `ability_gained`. Prueba T4. Se decide la lista negra |
 | 4 | `frames` | Muestreo desde `Runner`; `cState` como máscara de bits; `Rigidbody2D` en caché | Trayectorias coherentes, Hz reales ≈ objetivo, sin bajada de FPS medible |
 | 5 | `inputs` + `device` | `InputHandler.Instance.inputActions` sondeado cada frame, flancos propios | Reconstruyo las pulsaciones de un tramo grabado |
 | 6 | `scenes/<scene>.json` + `scene_object` | `On.GameManager.OnNextLevelReady` (+1 frame), `On.SceneData.SaveMyState_*` con diccionario sombra | JSON por escena con enemigos (incluidos inactivos), gates y objetos. Grafo de Dirtmouth y Crossroads correcto. Pruebas T7, T9 |

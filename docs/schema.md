@@ -179,7 +179,7 @@ Notas:
 | `enemy_spawn` | `enemy`, `already_dead` | `OnEnableEnemyHook` (devuelve `isAlreadyDead` sin tocar) |
 | `focus` | `phase` (`start`/`stop`), `mp` | `On.HeroController.StartMPDrain` y `StopMPDrain` **[test]** |
 | `fsm_state` | `fsm` (`Spell Control`/…), `from`, `to` | sondeo cada frame de `HeroController.spellControl.ActiveStateName`. Con esto se detectan después hechizos, focus y nail arts **[test]** |
-| `breakable` | `name`, `x, y` | `On.Breakable.Break` |
+| `env_break` | `kind` (`breakable`/`pole`/`grass`/`vine`), `name`, `x, y`, `attack_type`, `src` | Entorno roto o cortado por el jugador: `On.Breakable.Break`, `On.BreakablePole.Hit`, `On.Grass.Hit`, `On.GrassBehaviour.CutReact`, `On.VinePlatformCut.Cut`. Para el perfilado (explorador / destructivo). La hierba se agrupa: como mucho un evento por objeto y visita |
 | `boss_scene` | `phase` (`start`/`bosses_dead`/`complete`), `boss_level`, `bosses[]` | `BossSceneController.Instance` (solo Godhome): `OnBossesDead`, `OnBossSceneComplete` |
 
 ### 4.3 Bloque `enemy`
@@ -198,6 +198,9 @@ Notas:
 |---|---|---|
 | `pd_change` | `f` (campo), `t` (b/i/f/s/v3/var), `old`, `new`, `src` (`hook`/`diff`/`list`) | `SetPlayer{Bool,Int,Float,String,Vector3,Variable}Hook`. Dentro del hook el campo todavía guarda el valor anterior, así que se lee directamente (`PlayerData.instance.<campo>` compila a `ldfld`, sin hooks). **Solo se emite si el valor cambia.** Los hooks devuelven siempre su entrada sin tocar |
 | `pd_change` (`src: diff`) | igual | diff a 1 Hz de los ~1460 campos escalares contra una copia en caché, con delegados tipados compilados en `Initialize` (sin boxing). Cubre lo que no pasa por hooks: `SetupNewPlayerData`, `AddGGPlayerDataOverrides`, `Reset`, `UpgradeSaveData` y la deserialización al cargar |
+| `boss_defeated` | `field`, `boss` | bool de PlayerData que pasa de false a true y cuyo nombre es de jefe (`*Defeated`, `defeated*`, `killedFinalBoss`, `*Killed` de PNJ), detectado por patrón al arrancar (~30 campos). Ejemplo: `falseKnightDefeated` |
+| `ability_gained` | `field`, `old`, `new` | `has*` de habilidades (`hasDash`, `hasWalljump`, `hasSuperDash`, `hasShadowDash`, `hasAcidArmour`, `hasDoubleJump`, `hasDreamNail`, `hasDreamGate`, `hasNailArt`, `hasCyclone`, `hasDashSlash`, `hasUpwardSlash`, `hasLantern`…) o subida de `fireballLevel`/`quakeLevel`/`screamLevel` |
+| `item_got` | `field`, `old`, `new`, `kind` (`charm`/`mask_shard`/`vessel_fragment`/`nail`/`key`/`relic`/`other`) | `gotCharm_N`, `heartPieces`, `vesselFragments`, `nailSmithUpgrades`, llaves (`has*Key`, `simpleKeys`), reliquias (`trinket1-4`), `ore`, `rancidEggs`… |
 | `pd_list` | `f`, `added[]`, `removed[]` | diff a 1 Hz de las 15 listas que se modifican in situ sin hook: `scenesVisited`, `scenesMapped`, `equippedCharms`, `unlockedBossScenes`, `scenesEncountered*`, `scenesGrubRescued`, `scenesFlameCollected`… |
 
 - **Nunca** se suscribe un `Get*Hook`: todas las lecturas del juego pasan por ellos.
@@ -207,8 +210,8 @@ Notas:
   La lista negra se decide al final de la fase 3, con datos reales.
 - Campos con trampa: `killsX` **cuenta hacia abajo** (lo que falta para completar el journal),
   y `mapZone` es la zona **de respawn**, no la actual.
-- `item_pickup`, `bench_rest`, `shade_killed` y similares se derivan en Python a partir de
-  `pd_change` (`gotCharm_N`, `has*`, `heartPieces`, `vesselFragments`, `atBench`…).
+- `boss_defeated`, `ability_gained` e `item_got` los emite el mod (además del `pd_change` crudo) para que el análisis
+  no dependa de conocer los nombres de campos. `bench_rest` y `shade_killed` se derivan en Python (`atBench`, `soulLimited`).
 
 ### 4.5 Objetos persistentes
 
