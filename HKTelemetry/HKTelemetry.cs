@@ -9,7 +9,7 @@ namespace HKTelemetry
     /// Punto de entrada del mod. Solo engancha y desengancha; la lógica vive en los recorders.
     /// Fase 0: esqueleto que carga, lee ajustes y deja constancia de la versión en ModLog.txt.
     /// </summary>
-    public class HKTelemetry : Mod, IGlobalSettings<GlobalSettings>
+    public partial class HKTelemetry : Mod, IGlobalSettings<GlobalSettings>
     {
         /// <summary>Versión del formato de datos. Ver docs/schema.md.</summary>
         public const int SchemaVersion = 1;
