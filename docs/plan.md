@@ -31,29 +31,19 @@ Verificación de la API contra el código, con referencias `archivo:línea`: [ap
 | 3 | 🟡 código hecho y probado en 1 sesión (`boss_defeated`, `ability_gained`, `item_got`) |
 | Mapa (nuevo, schema v2) | ✅ probado el 17/11 (mapa rápido andando y quieto, inventario, desplazamiento) |
 | 7 (HUD) | ✅ probado el 17/11: punto verde/gris, línea de título y overlay de debug |
-| 4 (`frames.csv`) y 5 (`inputs.csv`) | 🟡 código hecho (schema v3), revisión adversarial aplicada y pruebas fuera del juego OK; **sin probar en el juego** |
+| 4 (`frames.csv`) y 5 (`inputs.csv`) | ✅ probadas el 17/11 (sesión `20261117_185043`): 59,8 Hz reales, huecos solo en cargas de sala, 4512 inputs de mando XBOX_ONE, mod a ~46 µs/frame, sin input lag |
 | 6, 8 | ⏳ pendientes |
 
 **Rendimiento (sesión `20261117_175815`, con debug activado):** el mod cuesta ~63 µs/frame de media jugando (~1 % de un frame a 180 fps). Los picos de **3,06 ms** que salen cada ~15 s (o múltiplos) son el **recolector de basura incremental de Unity**: `boot.config` del juego tiene `gc-max-time-slice=3`, la duración es siempre la misma y caen también en segundos sin ningún evento. Es la recolección del juego entero que a veces arranca dentro de una asignación del mod; el frame dura ~6 ms en vez de 5,6, sin perder frames. Los dos picos grandes (24 ms y 14 ms) son de una sola vez, en la carga de partida (compilación JIT del mod y volcado de FSM, que ahora solo se hace en modo debug).
 
 **Abierto:** input lag percibido. Las medidas no lo explican; falta la prueba A/B (un rato con el mod desactivado en la misma zona).
 
-### Próxima sesión de prueba (pendiente): fases 4 y 5
+### Lo que falta para entregar el mod
 
-Build instalada con `frames.csv` e `inputs.csv` (schema v3). Pasos, unos 10 min:
-
-1. Activar **Modo debug** (Mods → HKTelemetry). Cargar cualquier partida.
-2. En el panel de debug debe salir la línea `frames: N (≈60 Hz)  inputs: M`, con los dos números subiendo.
-3. Jugar 5 minutos con normalidad: moverse, saltar, atacar, dash, hechizos, curarse; abrir el inventario y pausar un momento.
-4. Mirar `mod: … µs/frame` (debería seguir alrededor de 60–70 µs).
-5. **Guardar y salir**, **cerrar el juego** y pegar en el chat la salida de `python tools/validate.py --all`.
-
-Qué se espera ver en `validate.py` (sesión nueva): una línea `frames:` con ~60 Hz reales y pocos huecos, una línea
-`inputs:` con dispositivo `pad` y el tipo de mando, ataques por minuto y pulsaciones por acción, y 0 errores.
-
-Probado el 17/11: mapa (rápido e inventario) y HUD (punto, línea de título, debug).
-
-Después: fase 8 (kit para participantes), fase 6 (catálogo de salas) y `to_parquet.py`.
+1. **Fase 8, kit para participantes** (imprescindible): instalador y desinstalador `.bat` (API + mod, con copia de seguridad), `player_id` ya puesto por persona, `.bat` para enviar los datos en un zip, guía de una página (cambio a la versión anterior en Steam) y aviso de qué se recoge.
+2. **Fase 6, catálogo de salas** (recomendada antes de entregar, porque no se puede reconstruir después): enemigos, objetos rompibles y tamaño de cada sala la primera vez que se entra.
+3. **Versión 1.0.0** en Release y prueba completa del kit en limpio (desinstalar, instalar con el kit, jugar, enviar datos).
+4. Después de entregar: `to_parquet.py` para el análisis y revisar en los primeros datos los puntos pendientes de schema.md §9.
 
 ### Perfilado de jugadores (agresivo / pasivo / explorador…)
 
