@@ -35,6 +35,22 @@ Verificación de la API contra el código, con referencias `archivo:línea`: [ap
 
 **Abierto:** input lag percibido. Primera medida (v1, solo el Runner): ~42 µs/frame de media y picos de ~3 ms cada 15–60 s, probablemente pausas del recolector de basura. En v2 se han quitado las fuentes de basura detectadas y `perf` mide ya todo el tiempo del mod (hooks incluidos): falta una sesión para confirmarlo.
 
+### Próxima sesión de prueba (pendiente)
+
+Build instalada: commit `9155bf7` (hash de la DLL comprobado). Pasos, unos 10–15 min:
+
+1. **Menú principal:** comprobar la línea de abajo (`HKTelemetry v0.1.0 - grabando como P00 - juego 1.5.78 OK`). En Mods → HKTelemetry, activar **Modo debug**.
+2. **Cargar partida:** el punto de arriba a la derecha debe ser **verde** y parpadear; en pausa, **gris**. Probar también «Indicador de grabación» desactivado (solo se oculta el verde/gris; el rojo siempre se ve).
+3. **Mapa rápido:** mantener Tab/LB varias veces, si se puede en zonas distintas.
+4. **Mapa del inventario:** abrir el inventario, ir a la pestaña del mapa, desplazarse y, si hay marcadores, poner uno.
+5. Mientras se juega, mirar `mod: … µs/frame` en el panel de debug y anotar si se sigue notando el input lag.
+6. **Guardar y salir**, **cerrar el juego** y pegar en el chat la salida de `python tools/validate.py --all`.
+7. Si se puede, copiar de `ModLog.txt` el bloque que empieza por `Descubrimiento de FSM` (sirve para nombrar los estados del inventario).
+
+Qué se espera ver en `validate.py`: eventos `map_open`/`map_close` emparejados (modo `quick` o `inventory`), `map_pan`, eventos `perf` con `mod_us_avg` y `mod_us_max`, y 0 errores.
+
+Después de la prueba: fase 4 (`frames.csv` a 60 Hz), fase 5 (`inputs.csv`), fase 6 (catálogo de salas) y fase 8 (kit para participantes).
+
 ### Perfilado de jugadores (agresivo / pasivo / explorador…)
 
 Objetivo añadido el 17/11/2026. No hace falta ningún evento «de perfil»: se calcula en Python a partir de los datos crudos.
