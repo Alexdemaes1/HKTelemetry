@@ -5,7 +5,7 @@ $Script:AssumeYes = [bool]$Yes
 
 try {
     $man = Read-Manifest
-    Write-Title ("HKTelemetry - enviar datos (" + $man.player_id + ")")
+    Write-Title "HKTelemetry - enviar datos"
     Wait-GameClosed
 
     $base = Get-DataRoot
@@ -90,7 +90,7 @@ try {
 
     $desktop = [Environment]::GetFolderPath('Desktop')
     if (-not $desktop -or -not (Test-Path -LiteralPath $desktop)) { $desktop = $env:USERPROFILE }
-    $zip = Join-Path $desktop ("HKTelemetry_" + $man.player_id + "_" + (Get-Date -Format 'yyyyMMdd_HHmm') + ".zip")
+    $zip = Join-Path $desktop ("HKTelemetry_datos_" + (Get-Date -Format 'yyyyMMdd_HHmm') + ".zip")
     if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
     Write-Info "Comprimiendo..."
     # ZipArchive de .NET en vez de Compress-Archive: en PowerShell 5.1 este guarda las rutas con barra invertida.

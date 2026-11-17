@@ -8,8 +8,9 @@ receptor hecho con Google Apps Script, que la guarda en tu Google Drive. Código
 
 - En el kit solo va la **dirección web** del receptor (`https://script.google.com/macros/s/.../exec`).
   No va ninguna contraseña, clave ni token.
-- Con esa dirección solo se puede **subir** trozos con el formato del mod: códigos de jugador
-  permitidos (`ALLOWED_PLAYER` en `Code.gs`, por defecto P00–P99), código de sesión válido, zip, sha256
+- Con esa dirección solo se puede **subir** trozos con el formato del mod: identificadores de jugador
+  válidos (`ALLOWED_PLAYER` en `Code.gs`: `S` + id de cuenta de Steam, `U` + id de instalación, o
+  P00–P99 para pruebas), código de sesión válido, zip, sha256
   correcto, máximo 8 MB por trozo. No se puede leer, listar, sustituir ni borrar nada: si llega un trozo
   con el mismo nombre y otro contenido, se guardan los dos.
 - Topes de espacio: 1 GB por jugador y **12 GB en total** (por debajo de los 15 GB gratis), así que ni
@@ -42,14 +43,14 @@ receptor hecho con Google Apps Script, que la guarda en tu Google Drive. Código
 8. Genera los kits con ella:
 
    ```bash
-   python tools/make_kit.py P01-P10 --upload-url https://script.google.com/macros/s/XXXX/exec
+   python tools/make_kit.py --upload-url https://script.google.com/macros/s/XXXX/exec
    ```
 
 Los datos aparecen en tu Drive en `HKTelemetry_datos/<jugador>/<sesión>.zip.part001of002`, etc.
 No muevas `HKTelemetry_datos` a la papelera: el receptor la recuerda por su id y, si está en la
 papelera, rechaza las subidas (el mod lo reintenta y los datos siguen en los PCs) hasta que la
-restaures. Para usar códigos que no sean P00–P99, cambia `ALLOWED_PLAYER` en `Code.gs` y publica
-una versión nueva (abajo).
+restaures. Cada jugador tiene su carpeta con el id de su cuenta de Steam (`S875967793`); su nombre de
+Steam va dentro de cada sesión (`session.json` → `identity.steam_name`).
 
 ## Si cambias el receptor
 

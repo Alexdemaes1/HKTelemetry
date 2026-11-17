@@ -47,7 +47,14 @@ al arrancar el juego la siguiente vez.
   "schema_version": 1,
   "mod_version": "0.1.0",
   "session_id": "uuid4", "launch_id": "uuid4",      // launch_id: uno por arranque del juego
-  "player_id": "P02",
+  "player_id": "S875967793",          // v3: "S" + id de cuenta de Steam (o "U" + id de instalación, o el PlayerId fijo)
+  "identity": {                         // v3: Session/Identity.cs, leído de ficheros de Steam (no de la API nativa)
+    "player_id": "S875967793",
+    "source": "steam_active_user",      // steam_active_user | steam_login_users | install_id | settings
+    "steam_name": "…",                  // nombre visible de Steam (PersonaName); se anonimiza al limpiar los datos
+    "steam_id64": "7656119…",
+    "steam_account_id": 875967793
+  },
   "experience": { /* automática, sección 3.2 */ },
   "game": {
     "api_version": "1.5.78.11833-77",   // ModHooks.ModVersion (versión de la DLL parcheada instalada)
@@ -100,7 +107,7 @@ Se recoge al empezar cada sesión. Todo crudo: «horas» y «se lo ha pasado» s
 | Campo | Fuente |
 |---|---|
 | `steam_playtime_min` | Horas totales del juego en Steam (minutos). `<Steam>/userdata/<id>/config/localconfig.vdf`, bloque de la app `367520`, campo `Playtime`. Solo se lee ese número. `null` si no hay Steam (GOG) |
-| `steam_playtime_source`, `steam_accounts` | v3. De qué cuenta salen los minutos: `active_user` (la que está jugando, `HKCU\Software\Valve\Steam\ActiveProcess\ActiveUser`) o `max_fallback` (máximo entre las cuentas del PC); y cuántas cuentas del PC tienen el juego. No se guardan ids de cuenta |
+| `steam_playtime_source`, `steam_accounts` | v3. De qué cuenta salen los minutos: `active_user` (la que está jugando, `HKCU\Software\Valve\Steam\ActiveProcess\ActiveUser`) o `max_fallback` (máximo entre las cuentas del PC); y cuántas cuentas del PC tienen el juego |
 | `achievements_unlocked` | Claves de los logros desbloqueados. Se recorre la lista de logros del propio juego (`GameManager.achievementHandler.achievementsList`) y se consulta cada uno con `Platform.Current.IsAchievementUnlocked` (Steam o GOG, solo lectura). `null` si la plataforma no responde |
 | `achievements_total`, `achievements_source` | Número de logros del juego; `platform` o `unavailable` |
 | `saves[]` | Por cada slot 1–4 con partida: `slot, play_time_s, completion, unlocked_completion_rate, permadeath_mode, boss_rush_mode, map_zone, max_health`. Fuente: `GameManager.GetSaveStatsForSlot`, lo mismo que usa la pantalla de selección de partida |
@@ -415,6 +422,6 @@ Se genera en el primer `scene_enter` de cada escena en la sesión, desde
 
 ## Changelog
 
-- **v3** (17/11/2026): `frames.csv` (§5) e `inputs.csv` (§6) implementados, con la cabecera exacta y búferes circulares sin asignaciones; evento `device` con `gamepad` y uno siempre al empezar; `game.other_mods` en session.json; `experience.steam_playtime_source` y `steam_accounts`; envío automático a Drive (`settings.auto_upload`, `upload.json`); contadores `frames`/`dropped_frames`/`inputs`/`dropped_inputs`. Sin cambios en `events.jsonl` salvo `device`.
+- **v3** (17/11/2026): `frames.csv` (§5) e `inputs.csv` (§6) implementados, con la cabecera exacta y búferes circulares sin asignaciones; evento `device` con `gamepad` y uno siempre al empezar; `game.other_mods` en session.json; identidad automática por Steam (`player_id` = `S<id de cuenta>`, bloque `identity`; ya no hay códigos de jugador en el kit); `experience.steam_playtime_source` y `steam_accounts`; envío automático a Drive (`settings.auto_upload`, `upload.json`); contadores `frames`/`dropped_frames`/`inputs`/`dropped_inputs`. Sin cambios en `events.jsonl` salvo `device`.
 - **v2** (17/11/2026): eventos de mapa (§4.7); `perf.mod_us_*` mide todo el tiempo del mod (hooks incluidos); `hit_dealt.hp_reset`; `death`/`hazard_respawn` llevan la fuente del golpe letal y se emiten después de su `hit_taken`; el `scene_exit` de «Guardar y salir» se emite al llegar a `Quit_To_Menu` (una salida cancelada ya no deja rastro); `env_break` solo cuando el objeto se rompe de verdad; motivo `new_game` para `Opening_Sequence → Tutorial_01`.
 - **v1** (16/11/2026): esquema inicial, verificado contra el código descompilado de la 1.5.78. Experiencia automática (§3.2) en lugar de autodeclarada; 60 Hz por defecto.

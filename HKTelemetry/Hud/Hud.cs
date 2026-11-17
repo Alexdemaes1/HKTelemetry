@@ -108,6 +108,7 @@ namespace HKTelemetry.Hud
             var go = CanvasUtil.CreateTextPanel(parent, "", size, anchor, rd, font);
             var t = go.GetComponent<Text>();
             t.raycastTarget = false;
+            t.supportRichText = false; // el título lleva el nombre de Steam: que "<size=300>" sea texto
             t.horizontalOverflow = HorizontalWrapMode.Overflow;
             t.verticalOverflow = VerticalWrapMode.Overflow;
             t.color = Color.white;
@@ -193,11 +194,12 @@ namespace HKTelemetry.Hud
                 RetryTrajan(now);
                 // StatusText devuelve strings constantes salvo con sesiones pendientes: comparar el valor.
                 string upload = Session.Uploader.StatusText();
-                if (_titleLine == null || !ReferenceEquals(_titlePid, settings.PlayerId) || upload != _titleUpload)
+                string who = Session.Identity.DisplayName;
+                if (_titleLine == null || !ReferenceEquals(_titlePid, who) || upload != _titleUpload)
                 {
-                    _titlePid = settings.PlayerId;
+                    _titlePid = who;
                     _titleUpload = upload;
-                    _titleLine = $"HKTelemetry v{HKTelemetry.VersionString}  -  grabando como {settings.PlayerId}  -  " +
+                    _titleLine = $"HKTelemetry v{HKTelemetry.VersionString}  -  grabando como {who}  -  " +
                                  $"juego 1.5.78 {(Unsupported ? "NO SOPORTADO" : "OK")}" +
                                  (upload != null ? "  -  " + upload : "");
                     _title.text = _titleLine;
@@ -247,10 +249,23 @@ namespace HKTelemetry.Hud
             var trajan = CanvasUtil.TrajanNormal;
             if (trajan != null)
             {
-                _title.font = trajan;
+                // Trajan es solo latina: con un nombre de Steam en otro alfabeto, el título se queda en Arial.
+                if (FontHasAll(trajan, Session.Identity.DisplayName)) _title.font = trajan;
                 _msg.font = trajan;
                 _fontTries = int.MaxValue;
             }
+        }
+
+        private static bool FontHasAll(Font font, string text)
+        {
+            if (string.IsNullOrEmpty(text)) return true;
+            try
+            {
+                foreach (char c in text)
+                    if (!char.IsWhiteSpace(c) && !font.HasCharacter(c)) return false;
+                return true;
+            }
+            catch { return false; }
         }
 
         private string DebugText(TelemetryWriter w, float now)

@@ -43,7 +43,8 @@ namespace HKTelemetry
             {
                 string unity = Application.unityVersion;
                 bool versionOk = unity == ExpectedUnityVersion;
-                Log($"HKTelemetry v{GetVersion()} (schema {SchemaVersion}) | player_id={Settings.PlayerId} | " +
+                Safe.Run("identity", () => Identity.Resolve(Settings, SaveGlobalSettings));
+                Log($"HKTelemetry v{GetVersion()} (schema {SchemaVersion}) | player_id={Identity.PlayerId} ({Identity.Source}) | " +
                     $"api={ModHooks.ModVersion} | unity={unity} ({(versionOk ? "OK" : "VERSION NO SOPORTADA")}) | " +
                     $"data={Application.persistentDataPath}");
                 Safe.SetMainThread();

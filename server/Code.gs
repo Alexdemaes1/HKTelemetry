@@ -17,8 +17,9 @@
  */
 
 // ---- Ajustes ----
-// Códigos de jugador aceptados (los que genera tools/make_kit.py: P01, P02...). Ampliar si hace falta.
-var ALLOWED_PLAYER = /^P\d{2}$/;
+// Identificadores aceptados (HKTelemetry/Session/Identity.cs): "S" + id de cuenta de Steam,
+// "U" + id aleatorio de instalación (sin Steam) y P00-P99 (desarrollo/pruebas).
+var ALLOWED_PLAYER = /^(S\d{1,10}|U[0-9a-f]{8}|P\d{2})$/;
 var MAX_PART_BYTES = 8 * 1024 * 1024;                 // el mod sube trozos de 5 MB
 var MAX_PARTS = 400;                                  // 2 GB por sesión: muy por encima de lo real
 var MAX_BYTES_PER_PLAYER = 1024 * 1024 * 1024;        // 1 GB (~150 h de juego)

@@ -83,7 +83,7 @@ namespace HKTelemetry.Session
 
             Clock.Reset();
             string id = Guid.NewGuid().ToString();
-            string pid = HKTelemetry.Settings.PlayerId ?? "P00";
+            string pid = Identity.PlayerId ?? "P00";
             foreach (char c in Path.GetInvalidFileNameChars()) pid = pid.Replace(c, '_');
             string dir = Path.Combine(Root, $"{DateTime.UtcNow:yyyyMMdd_HHmmss}_{pid}_{id.Substring(0, 8)}");
             // Búferes nuevos por sesión: el escritor de la sesión anterior puede seguir vaciando los suyos.
@@ -245,7 +245,8 @@ namespace HKTelemetry.Session
                     ["mod_version"] = HKTelemetry.Instance?.GetVersion(),
                     ["session_id"] = s.Id,
                     ["launch_id"] = LaunchId,
-                    ["player_id"] = HKTelemetry.Settings.PlayerId,
+                    ["player_id"] = Identity.PlayerId,
+                    ["identity"] = Identity.Snapshot(),
                     ["experience"] = s.Experience.Snapshot(),
                     ["game"] = s.Game,
                     ["save"] = new Dictionary<string, object>

@@ -33,7 +33,8 @@ Verificación de la API contra el código, con referencias `archivo:línea`: [ap
 | 7 (HUD) | ✅ probado el 17/11: punto verde/gris, línea de título y overlay de debug |
 | 4 (`frames.csv`) y 5 (`inputs.csv`) | ✅ probadas el 17/11 (sesión `20261117_185043`): 59,8 Hz reales, huecos solo en cargas de sala, 4512 inputs de mando XBOX_ONE, mod a ~46 µs/frame, sin input lag |
 | 8 (kit) | ✅ probado el 17/11 en el juego con el kit P99 (sesión `20261117_195746`: instalar con API previa, jugar, exportar; 0 errores). Probado fuera del juego: 6 escenarios de instalar/desinstalar (`tools/test_kit.ps1`) |
-| Envío automático | 🟡 código hecho (`Uploader.cs`, `server/Code.gs`, `docs/upload-setup.md`); probado fuera del juego contra un receptor simulado. Falta desplegar el receptor en la cuenta del proyecto y probarlo jugando |
+| Envío automático | 🟡 receptor desplegado en la cuenta del proyecto y probado desde el PC (subida real, duplicados, validación). Falta probarlo jugando |
+| Kit único + identidad Steam | 🟡 un solo `dist/HKTelemetry.zip`; el jugador se identifica por su cuenta de Steam (`Identity.cs`, probado leyendo el Steam real). Falta actualizar el receptor (nueva versión de `Code.gs`) y probarlo jugando |
 | 6 | ⏳ pendiente |
 
 **Rendimiento (sesión `20261117_175815`, con debug activado):** el mod cuesta ~63 µs/frame de media jugando (~1 % de un frame a 180 fps). Los picos de **3,06 ms** que salen cada ~15 s (o múltiplos) son el **recolector de basura incremental de Unity**: `boot.config` del juego tiene `gc-max-time-slice=3`, la duración es siempre la misma y caen también en segundos sin ningún evento. Es la recolección del juego entero que a veces arranca dentro de una asignación del mod; el frame dura ~6 ms en vez de 5,6, sin perder frames. Los dos picos grandes (24 ms y 14 ms) son de una sola vez, en la carga de partida (compilación JIT del mod y volcado de FSM, que ahora solo se hace en modo debug).
@@ -42,7 +43,7 @@ Verificación de la API contra el código, con referencias `archivo:línea`: [ap
 
 ### Lo que falta para entregar el mod
 
-1. **Fase 8, kit para participantes** (imprescindible): instalador y desinstalador `.bat` (API + mod, con copia de seguridad), `player_id` ya puesto por persona, `.bat` para enviar los datos en un zip, guía de una página (cambio a la versión anterior en Steam) y aviso de qué se recoge.
+1. **Fase 8, kit para participantes** (imprescindible): instalador y desinstalador `.bat` (API + mod, con copia de seguridad), un único kit para todos (identidad automática por Steam), `.bat` para enviar los datos en un zip, guía de una página (cambio a la versión anterior en Steam) y aviso de qué se recoge.
 2. **Fase 6, catálogo de salas** (recomendada antes de entregar, porque no se puede reconstruir después): enemigos, objetos rompibles y tamaño de cada sala la primera vez que se entra.
 3. **Versión 1.0.0** en Release y prueba completa del kit en limpio (desinstalar, instalar con el kit, jugar, enviar datos).
 4. Después de entregar: `to_parquet.py` para el análisis y revisar en los primeros datos los puntos pendientes de schema.md §9.
@@ -67,7 +68,7 @@ Objetivo añadido el 17/11/2026. No hace falta ningún evento «de perfil»: se 
 ```
 HKTelemetry/
   HKTelemetry.cs        Mod, IGlobalSettings<GlobalSettings>, IMenuMod; solo engancha y desengancha
-  Settings.cs           player_id (solo en el JSON del kit), sample_hz, hide_hud, debug
+  Settings.cs           PlayerId ("auto" = Steam), sample_hz, hide_hud, debug, upload_url, auto_upload
   Menu.cs               menú de ajustes (indicador, frecuencia, debug)
   Runner.cs             MonoBehaviour DontDestroyOnLoad: reloj, sondeos por frame, cola de errores → Logger/HUD
   Session/              SessionManager (ciclo de vida), ProgressSnapshot, PlayerDataTable (delegados tipados)
@@ -132,7 +133,7 @@ y la carpeta de sesión → `tools/validate.py` → commit.
 6. **Motivo de `scene_exit`:** clasificador sobre `SceneLoadInfo` en `BeginSceneTransition`,
    guardando siempre los campos crudos para poder recalcularlo. Tabla en `schema.md` §4.1.
    `bench_respawn` deja de ser un motivo de salida: es la entrada tras una muerte o una carga.
-7. **Experiencia:** automática, sin preguntar (`schema.md` §3.2): horas de Steam (o suma de las partidas), logros desbloqueados (o datos de las partidas) y el control que se use de verdad. El `player_id` va en `Mods/HKTelemetry/HKTelemetry.GlobalSettings.json` del kit y no aparece en el menú. El menú solo tiene: indicador de grabación, frecuencia de muestreo (pruebas) y modo debug.
+7. **Experiencia:** automática, sin preguntar (`schema.md` §3.2): horas de Steam (o suma de las partidas), logros desbloqueados (o datos de las partidas) y el control que se use de verdad. El jugador se identifica solo por su cuenta de Steam (`Session/Identity.cs`: `S` + id de cuenta, nombre de Steam en `session.json`); se anonimiza al limpiar los datos. El menú solo tiene: indicador de grabación, frecuencia de muestreo (pruebas) y modo debug.
 8. **Escritura:** hilo dedicado, volcado cada 500 ms o 64 KB, texto plano en append durante la
    sesión, gzip al cerrar y recuperación al siguiente arranque. Si hay presión se descartan
    frames antes que eventos, siempre con contador.

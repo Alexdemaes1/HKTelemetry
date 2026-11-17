@@ -2,18 +2,20 @@
 """Genera un kit de instalación por participante (docs/plan.md, fase 8).
 
 Uso:
-    python tools/make_kit.py P01 P02 P03          # un zip por código
-    python tools/make_kit.py P01-P10              # rango
-    python tools/make_kit.py P01 --no-build       # usar la DLL Release ya compilada
-    python tools/make_kit.py P01-P10 --upload-url https://script.google.com/macros/s/XXXX/exec
-                                                  # con envío automático a Drive (docs/upload-setup.md)
+    python tools/make_kit.py --upload-url https://script.google.com/macros/s/XXXX/exec
+                                                  # el kit para repartir (envío automático a Drive)
+    python tools/make_kit.py                      # sin envío automático (datos con 2_ENVIAR_DATOS.bat)
+    python tools/make_kit.py --no-build           # usar la DLL Release ya compilada
+    python tools/make_kit.py --player P99         # kit de pruebas con un código fijo
 
-Salida: dist/HKTelemetry_<código>.zip, con una carpeta HKTelemetry_<código>/ dentro:
+Un solo kit para todos: cada jugador se identifica solo por su cuenta de Steam (Session/Identity.cs).
+
+Salida: dist/HKTelemetry.zip (o HKTelemetry_<código>.zip con --player), con una carpeta dentro:
     1_INSTALAR.bat  2_ENVIAR_DATOS.bat  3_DESINSTALAR.bat  LEEME.txt
     scripts/*.ps1
     files/manifest.json
     files/api/      Modding API v77 (zip oficial, comprobado por hash) + licencia MIT
-    files/mod/      HKTelemetry.dll (Release) + HKTelemetry.GlobalSettings.json con el player_id
+    files/mod/      HKTelemetry.dll (Release) + HKTelemetry.GlobalSettings.json (PlayerId "auto" y la URL)
 
 La Modding API se descarga una vez a dist/cache/ (o se pasa con --api-zip).
 """
@@ -142,12 +144,12 @@ Se puede desactivar en Opciones > Mods > HKTelemetry.
 Si te lo pide Alex, o el envío automático no funciona:
 1. Cierra Hollow Knight.
 2. Doble clic en 2_ENVIAR_DATOS.bat.
-3. Aparece un zip en tu Escritorio (HKTelemetry_{PLAYER_ID}_fecha.zip).
+3. Aparece un zip en tu Escritorio (HKTelemetry_datos_fecha.zip).
    Envíaselo a Alex por WhatsApp, Drive, correo... como te venga mejor."""
 
 UPLOAD_MANUAL = """1. Cierra Hollow Knight.
 2. Doble clic en 2_ENVIAR_DATOS.bat.
-3. Aparece un zip en tu Escritorio (HKTelemetry_{PLAYER_ID}_fecha.zip).
+3. Aparece un zip en tu Escritorio (HKTelemetry_datos_fecha.zip).
    Envíaselo a Alex por WhatsApp, Drive, correo... como te venga mejor.
 Puedes enviarlos cuando quieras y las veces que quieras; se envía todo lo
 grabado hasta ese momento."""
@@ -173,7 +175,7 @@ def kit_text(path: Path, player: str, auto_upload: bool) -> bytes:
 
 
 def make_kit(player: str, api: dict[str, bytes], dll: bytes, version: str, api_zip_sha: str, upload_url: str) -> Path:
-    top = f"HKTelemetry_{player}"
+    top = "HKTelemetry" if player == "auto" else f"HKTelemetry_{player}"
     settings = json.dumps({"PlayerId": player, "SampleHz": 60, "HideHud": False, "Debug": False,
                            "UploadUrl": upload_url, "AutoUpload": True}, indent=2).encode()
     api_license = (ROOT / "reference" / "modding-api" / "LICENSE")
@@ -183,7 +185,6 @@ def make_kit(player: str, api: dict[str, bytes], dll: bytes, version: str, api_z
     manifest = {
         "kit_version": version,
         "mod_version": version,
-        "player_id": player,
         "auto_upload": bool(upload_url),
         "game": {
             "unity_prefix": UNITY_PREFIX,
@@ -217,21 +218,22 @@ def make_kit(player: str, api: dict[str, bytes], dll: bytes, version: str, api_z
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("players", nargs="+", help="códigos de jugador (P01 P02 ... o rangos P01-P10)")
+    ap.add_argument("--player", default="auto",
+                    help='"auto" (por defecto: identidad de Steam) o un código fijo para pruebas (p. ej. P99)')
     ap.add_argument("--api-zip", type=Path, help=f"ruta a {API_ZIP_NAME} (por defecto se descarga a dist/cache)")
     ap.add_argument("--no-build", action="store_true", help="no recompilar; usar bin/Release/net472/HKTelemetry.dll")
     ap.add_argument("--upload-url", default="", help="dirección /exec del receptor de Apps Script (vacío = sin envío automático)")
     args = ap.parse_args()
 
-    players = parse_players(args.players)
+    players = ["auto"] if args.player == "auto" else parse_players([args.player])
     if args.upload_url and not UPLOAD_RE.fullmatch(args.upload_url):
         sys.exit("--upload-url tiene que ser la dirección de la aplicación web: https://script.google.com/macros/s/<id>/exec")
     if not args.upload_url:
         print("AVISO: kit sin envío automático (falta --upload-url): los datos solo se envían con 2_ENVIAR_DATOS.bat")
     else:
-        odd = [p for p in players if not re.fullmatch(r"P\d{2}", p)]
+        odd = [p for p in players if p != "auto" and not re.fullmatch(r"P\d{2}", p)]
         if odd:
-            print(f"AVISO: el receptor (server/Code.gs, ALLOWED_PLAYER) solo acepta P00-P99; rechazaría {odd}")
+            print(f"AVISO: el receptor (server/Code.gs, ALLOWED_PLAYER) solo acepta Steam, instalación o P00-P99; rechazaría {odd}")
     api_zip = get_api_zip(args.api_zip)
     api = api_files_from_zip(api_zip)
     dll = build_mod(args.no_build)

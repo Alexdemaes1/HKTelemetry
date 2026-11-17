@@ -8,7 +8,7 @@ $Script:GameDirOverride = $GameDir
 try {
     $man = Read-Manifest
     Test-KitFiles $man
-    Write-Title ("HKTelemetry " + $man.mod_version + " - instalación para " + $man.player_id)
+    Write-Title ("HKTelemetry " + $man.mod_version + " - instalación")
 
     # ---- 1. Aviso de datos y consentimiento ----
     Write-Info "Este mod SOLO registra cómo juegas a Hollow Knight, para un trabajo de máster de IA."
@@ -25,8 +25,9 @@ try {
     Write-Info "  - Horas jugadas a Hollow Knight en Steam y logros conseguidos (para saber tu experiencia)."
     Write-Info "  - Datos técnicos: fps, resolución, versión del juego y otros mods instalados."
     Write-Info "  - Progreso de tus partidas guardadas (horas, porcentaje completado)."
-    Write-Info ("Se identifica solo con tu código " + $man.player_id + ": ni tu nombre, ni tu cuenta de Steam,")
-    Write-Info "ni nada fuera de Hollow Knight. Puedes desinstalarlo cuando quieras con 3_DESINSTALAR.bat."
+    Write-Info "  - Tu nombre de Steam y el número de tu cuenta de Steam, para saber de quién es cada partida"
+    Write-Info "    (no tu usuario ni tu contraseña). Alex los cambia por un código anónimo antes de analizarlos."
+    Write-Info "Nada más de fuera de Hollow Knight. Puedes desinstalarlo cuando quieras con 3_DESINSTALAR.bat."
     if ($auto) {
         Write-Info ""
         Write-Info "Envío: al volver al menú principal, cada partida terminada se envía por internet a una"
@@ -123,7 +124,6 @@ try {
         # El estado se escribe ANTES de copiar: si algo falla a medias, el desinstalador sabe qué restaurar.
         Write-State $gameDir @{
             kit_version = $man.kit_version
-            player_id = $man.player_id
             api_installed_by_kit = $true
             api_files_added = $added
             api_files_replaced = $replaced
@@ -162,21 +162,36 @@ try {
     Write-Title "Mod HKTelemetry"
     $modDir = Join-Path $managed 'Mods\HKTelemetry'
     if (-not (Test-Path -LiteralPath $modDir)) { [void](New-Item -ItemType Directory -Path $modDir -Force) }
+    # Sin Steam, el jugador se identifica con un id aleatorio guardado en los ajustes: conservarlo.
+    $oldInstallId = $null
+    $settingsPath = Join-Path $modDir 'HKTelemetry.GlobalSettings.json'
+    try {
+        if (Test-Path -LiteralPath $settingsPath) {
+            $oldInstallId = Get-Prop (Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json) 'InstallId'
+            if ($oldInstallId -notmatch '^[0-9a-f]{8}$') { $oldInstallId = $null }
+        }
+    } catch { $oldInstallId = $null }
     foreach ($f in $man.mod_files) {
         Copy-Item -LiteralPath (Join-Path $Script:FilesDir ('mod\' + $f.name)) -Destination (Join-Path $modDir $f.name) -Force
         if ((Get-Sha256 (Join-Path $modDir $f.name)) -ne $f.sha256) { Stop-Kit ("La copia de " + $f.name + " no ha salido bien.") }
+    }
+    if ($oldInstallId) {
+        try {
+            $js = Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $js | Add-Member -NotePropertyName 'InstallId' -NotePropertyValue $oldInstallId -Force
+            [IO.File]::WriteAllText($settingsPath, ($js | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
+        } catch { }
     }
     # Restos de compilaciones de desarrollo que no forman parte del kit.
     $pdb = Join-Path $modDir 'HKTelemetry.pdb'
     if (Test-Path -LiteralPath $pdb) { Remove-Item -LiteralPath $pdb -Force }
     Get-ChildItem -LiteralPath $modDir -File | ForEach-Object { try { Unblock-File -LiteralPath $_.FullName } catch { } }
     Get-ChildItem -LiteralPath $managed -File | ForEach-Object { try { Unblock-File -LiteralPath $_.FullName } catch { } }
-    Write-Ok ("Mod instalado con el código de jugador " + $man.player_id + ".")
+    Write-Ok "Mod instalado."
 
     $state = Read-State $gameDir
     $newState = @{
         kit_version = $man.kit_version
-        player_id = $man.player_id
         api_installed_by_kit = $apiByKit
         api_files_added = @()
         api_files_replaced = @()
@@ -198,7 +213,7 @@ try {
 
     Write-Title "Listo"
     Write-Info "Abre Hollow Knight desde Steam y juega normal. En el menú principal, abajo, verás:"
-    Write-Info ("  HKTelemetry v" + $man.mod_version + " - grabando como " + $man.player_id)
+    Write-Info ("  HKTelemetry v" + $man.mod_version + " - grabando como <tu nombre de Steam>")
     Write-Info "Mientras juegas, un punto verde arriba a la derecha indica que está grabando"
     Write-Info "(gris en pausa o menús; ROJO si algo falla: en ese caso avisa a Alex)."
     Write-Info ""

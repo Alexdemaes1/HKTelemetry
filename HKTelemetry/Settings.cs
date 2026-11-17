@@ -13,8 +13,14 @@ namespace HKTelemetry
     [Serializable]
     public class GlobalSettings
     {
-        /// <summary>Pseudónimo del participante (P01, P02...). Viene en el kit; no aparece en el menú.</summary>
-        public string PlayerId = "P00";
+        /// <summary>
+        /// "auto" (el del kit): identidad sacada de Steam (Session/Identity.cs). Cualquier otro valor se usa
+        /// tal cual (p. ej. "P00" en desarrollo). No aparece en el menú.
+        /// </summary>
+        public string PlayerId = "auto";
+
+        /// <summary>Id aleatorio de esta instalación, solo si no se puede leer Steam ("U" + esto).</summary>
+        public string InstallId = "";
 
         /// <summary>Frecuencia de muestreo de frames.csv (10, 20, 30 o 60).</summary>
         public int SampleHz = 60;

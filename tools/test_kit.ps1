@@ -1,7 +1,7 @@
 ﻿# Pruebas del kit (tools/make_kit.py) sobre COPIAS del juego en una carpeta temporal: nunca toca la instalación real.
 # Requisitos: juego 1.5.78 con la Modding API v77 instalada en la ruta de Steam por defecto,
-# reference/vanilla-managed-backup/ (Assembly-CSharp.dll y mscorlib.dll originales) y dist/HKTelemetry_P99.zip
-# (python tools/make_kit.py P99). Uso: powershell -ExecutionPolicy Bypass -File tools\test_kit.ps1
+# reference/vanilla-managed-backup/ (Assembly-CSharp.dll y mscorlib.dll originales) y dist/HKTelemetry.zip
+# (python tools/make_kit.py). Uso: powershell -ExecutionPolicy Bypass -File tools\test_kit.ps1
 # Nota: cada instalación de prueba hace una copia de las partidas en ...\Hollow Knight\HKTelemetry_saves_backup\.
 $ErrorActionPreference = 'Stop'
 $Repo = Split-Path -Parent $PSScriptRoot
@@ -11,9 +11,9 @@ $real = 'C:\Program Files (x86)\Steam\steamapps\common\Hollow Knight'
 $Bk = Join-Path $Repo 'reference\vanilla-managed-backup'
 $K = "$S\kittest"
 if (Test-Path $K) { Remove-Item $K -Recurse -Force }
-Expand-Archive (Join-Path $Repo 'dist\HKTelemetry_P99.zip') $K
-$inst = "$K\HKTelemetry_P99\scripts\install.ps1"
-$unin = "$K\HKTelemetry_P99\scripts\uninstall.ps1"
+Expand-Archive (Join-Path $Repo 'dist\HKTelemetry.zip') $K
+$inst = "$K\HKTelemetry\scripts\install.ps1"
+$unin = "$K\HKTelemetry\scripts\uninstall.ps1"
 $apiAdded = 'MMHOOK_Assembly-CSharp.dll','MMHOOK_PlayMaker.dll','MonoMod.RuntimeDetour.dll','MonoMod.Utils.dll','Mono.Cecil.dll','Assembly-CSharp.xml','mscorlib.xml','unityscenerepacker.dll'
 $fail = 0
 
@@ -99,13 +99,13 @@ $o = Run $unin $G; Check "desinstalar deja la API" ($o -match 'no la instaló es
 
 "== 6. Copia que falta, con corchetes en la ruta: mensaje en español =="
 $G = New-FakeGame 'corchetes'
-Remove-Item -LiteralPath "$K\HKTelemetry_P99\files\api\Mono.Cecil.dll" -Force
+Remove-Item -LiteralPath "$K\HKTelemetry\files\api\Mono.Cecil.dll" -Force
 $o = Run $inst $G
 Check "mensaje claro, sin error técnico" ($o -match 'incompleto o da.ado .api/Mono.Cecil.dll.' -and $o -notmatch 'Error inesperado')
 Check "no ha tocado el juego" (-not (Test-Path -LiteralPath "$G\hollow_knight_Data\HKTelemetry_kit"))
 Write-Host ($o -split "`n" | Select-String 'X\]' | Out-String)
-Expand-Archive (Join-Path $Repo 'dist\HKTelemetry_P99.zip') "$S\kit_tmp" -Force
-Copy-Item "$S\kit_tmp\HKTelemetry_P99\files\api\Mono.Cecil.dll" "$K\HKTelemetry_P99\files\api\Mono.Cecil.dll"
+Expand-Archive (Join-Path $Repo 'dist\HKTelemetry.zip') "$S\kit_tmp" -Force
+Copy-Item "$S\kit_tmp\HKTelemetry\files\api\Mono.Cecil.dll" "$K\HKTelemetry\files\api\Mono.Cecil.dll"
 Remove-Item "$S\kit_tmp" -Recurse -Force
 
 Remove-Item -LiteralPath "$S\juegos [SSD] ñ" -Recurse -Force

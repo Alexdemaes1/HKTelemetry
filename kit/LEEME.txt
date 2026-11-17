@@ -1,5 +1,4 @@
 HKTelemetry - mod de Hollow Knight para un trabajo de máster de IA
-Tu código de jugador: {PLAYER_ID}
 ==================================================================
 
 QUÉ ES
@@ -32,7 +31,7 @@ Hace falta Windows 10 u 11 y Hollow Knight comprado en Steam.
 JUGAR
 -----
 - Abre Hollow Knight desde Steam como siempre. En el menú principal, abajo,
-  verás "HKTelemetry v... - grabando como {PLAYER_ID}".
+  verás "HKTelemetry v... - grabando como <tu nombre de Steam>".
 - Juega como juegues normalmente: tu partida de siempre o una nueva, el rato
   que quieras. Cuanto más juegues, mejor, pero no hace falta forzarlo.
 - Arriba a la derecha hay un punto pequeño:
@@ -62,9 +61,10 @@ QUÉ DATOS SE RECOGEN
 - Tu experiencia previa con el juego: horas jugadas a Hollow Knight en Steam,
   logros conseguidos y el progreso de tus partidas guardadas.
 - Datos técnicos: fps, resolución, versión del juego y otros mods instalados.
-
-Todo se identifica solo con tu código {PLAYER_ID}. No se guarda tu nombre, ni tu
-cuenta de Steam, ni nada de fuera de Hollow Knight.
+- Para saber de quién es cada partida: tu nombre de Steam y el número de tu
+  cuenta de Steam (no tu usuario ni tu contraseña). Alex los sustituye por un
+  código anónimo antes de analizar los datos.
+Nada más de fuera de Hollow Knight.
 {PRIVACY_SENTENCE}
 Si en algún momento quieres que se borren tus datos, díselo a Alex.
 
