@@ -33,6 +33,7 @@ Verificación de la API contra el código, con referencias `archivo:línea`: [ap
 | 7 (HUD) | ✅ probado el 17/11: punto verde/gris, línea de título y overlay de debug |
 | 4 (`frames.csv`) y 5 (`inputs.csv`) | ✅ probadas el 17/11 (sesión `20261117_185043`): 59,8 Hz reales, huecos solo en cargas de sala, 4512 inputs de mando XBOX_ONE, mod a ~46 µs/frame, sin input lag |
 | 8 (kit) | ✅ probado el 17/11 en el juego con el kit P99 (sesión `20261117_195746`: instalar con API previa, jugar, exportar; 0 errores). Probado fuera del juego: 6 escenarios de instalar/desinstalar (`tools/test_kit.ps1`) |
+| Envío automático | 🟡 código hecho (`Uploader.cs`, `server/Code.gs`, `docs/upload-setup.md`); probado fuera del juego contra un receptor simulado. Falta desplegar el receptor en la cuenta del proyecto y probarlo jugando |
 | 6 | ⏳ pendiente |
 
 **Rendimiento (sesión `20261117_175815`, con debug activado):** el mod cuesta ~63 µs/frame de media jugando (~1 % de un frame a 180 fps). Los picos de **3,06 ms** que salen cada ~15 s (o múltiplos) son el **recolector de basura incremental de Unity**: `boot.config` del juego tiene `gc-max-time-slice=3`, la duración es siempre la misma y caen también en segundos sin ningún evento. Es la recolección del juego entero que a veces arranca dentro de una asignación del mod; el frame dura ~6 ms en vez de 5,6, sin perder frames. Los dos picos grandes (24 ms y 14 ms) son de una sola vez, en la carga de partida (compilación JIT del mod y volcado de FSM, que ahora solo se hace en modo debug).

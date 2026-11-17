@@ -14,13 +14,25 @@ try {
     Write-Info "Este mod SOLO registra cómo juegas a Hollow Knight, para un trabajo de máster de IA."
     Write-Info "No cambia nada del juego ni de tus partidas."
     Write-Info ""
-    Write-Info "Qué se guarda (en tu PC, hasta que tú lo envíes con 2_ENVIAR_DATOS.bat):"
+    $auto = [bool](Get-Prop $man 'auto_upload')
+    if ($auto) {
+        Write-Info "Qué se guarda (en tu PC; al terminar cada partida se envía solo a la carpeta del proyecto):"
+    } else {
+        Write-Info "Qué se guarda (en tu PC, hasta que tú lo envíes con 2_ENVIAR_DATOS.bat):"
+    }
     Write-Info "  - Lo que pasa en la partida: salas, combates, vida, alma, objetos, mapa..."
     Write-Info "  - Posición del personaje y botones pulsados (60 veces por segundo)."
     Write-Info "  - Horas jugadas a Hollow Knight en Steam y logros conseguidos (para saber tu experiencia)."
     Write-Info "  - Datos técnicos: fps, resolución, versión del juego y otros mods instalados."
+    Write-Info "  - Progreso de tus partidas guardadas (horas, porcentaje completado)."
     Write-Info ("Se identifica solo con tu código " + $man.player_id + ": ni tu nombre, ni tu cuenta de Steam,")
     Write-Info "ni nada fuera de Hollow Knight. Puedes desinstalarlo cuando quieras con 3_DESINSTALAR.bat."
+    if ($auto) {
+        Write-Info ""
+        Write-Info "Envío: al volver al menú principal, cada partida terminada se envía por internet a una"
+        Write-Info "carpeta de Google Drive del proyecto (solo la ve Alex). Puedes desactivarlo en"
+        Write-Info "Opciones > Mods > HKTelemetry y enviar tú los datos con 2_ENVIAR_DATOS.bat."
+    }
     Write-Info ""
     if (-not $Elevated) {
         if (-not (Read-YesNo "¿Estás de acuerdo y quieres instalarlo?")) { Stop-Kit "Instalación cancelada. No se ha tocado nada." }
@@ -190,7 +202,12 @@ try {
     Write-Info "Mientras juegas, un punto verde arriba a la derecha indica que está grabando"
     Write-Info "(gris en pausa o menús; ROJO si algo falla: en ese caso avisa a Alex)."
     Write-Info ""
-    Write-Info "Cuando quieras enviar tus datos: cierra el juego y ejecuta 2_ENVIAR_DATOS.bat."
+    if ([bool](Get-Prop $man 'auto_upload')) {
+        Write-Info "Los datos se envían solos al volver al menú principal (necesita internet). En el menú verás"
+        Write-Info "'datos enviados' o cuántas sesiones quedan. Si algo falla, usa 2_ENVIAR_DATOS.bat."
+    } else {
+        Write-Info "Cuando quieras enviar tus datos: cierra el juego y ejecuta 2_ENVIAR_DATOS.bat."
+    }
 }
 catch {
     Write-Bad ("Error inesperado: " + $_.Exception.Message)

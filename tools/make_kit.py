@@ -5,6 +5,8 @@ Uso:
     python tools/make_kit.py P01 P02 P03          # un zip por código
     python tools/make_kit.py P01-P10              # rango
     python tools/make_kit.py P01 --no-build       # usar la DLL Release ya compilada
+    python tools/make_kit.py P01-P10 --upload-url https://script.google.com/macros/s/XXXX/exec
+                                                  # con envío automático a Drive (docs/upload-setup.md)
 
 Salida: dist/HKTelemetry_<código>.zip, con una carpeta HKTelemetry_<código>/ dentro:
     1_INSTALAR.bat  2_ENVIAR_DATOS.bat  3_DESINSTALAR.bat  LEEME.txt
@@ -47,6 +49,7 @@ API_AC_SHA256 = "5944411bd93830369390a4b51766ee68c4ab26195b299e25a07b5e7d0e00086
 UNITY_PREFIX = "2020.2.2"
 
 PLAYER_RE = re.compile(r"^[A-Za-z0-9_]{1,16}$")
+UPLOAD_RE = re.compile(r"^https://script\.google\.com/macros/s/[A-Za-z0-9_-]{20,}/exec$")
 
 
 def sha256(data: bytes) -> str:
@@ -130,18 +133,49 @@ def mod_version() -> str:
     return m.group(1) if m else "0.0.0"
 
 
-def kit_text(path: Path, player: str) -> bytes:
+UPLOAD_AUTO = """Normalmente no tienes que hacer nada: al terminar cada partida ("Guardar y
+salir"), el mod envía esa sesión por internet desde el menú principal, sin
+afectar al juego. En el menú verás "datos enviados" o cuántas sesiones quedan
+por enviar (si no hay internet, lo reintenta la próxima vez que abras el juego).
+Se puede desactivar en Opciones > Mods > HKTelemetry.
+
+Si te lo pide Alex, o el envío automático no funciona:
+1. Cierra Hollow Knight.
+2. Doble clic en 2_ENVIAR_DATOS.bat.
+3. Aparece un zip en tu Escritorio (HKTelemetry_{PLAYER_ID}_fecha.zip).
+   Envíaselo a Alex por WhatsApp, Drive, correo... como te venga mejor."""
+
+UPLOAD_MANUAL = """1. Cierra Hollow Knight.
+2. Doble clic en 2_ENVIAR_DATOS.bat.
+3. Aparece un zip en tu Escritorio (HKTelemetry_{PLAYER_ID}_fecha.zip).
+   Envíaselo a Alex por WhatsApp, Drive, correo... como te venga mejor.
+Puedes enviarlos cuando quieras y las veces que quieras; se envía todo lo
+grabado hasta ese momento."""
+
+PRIVACY_AUTO = """Al terminar cada partida, la sesión se envía por internet a una carpeta de
+Google Drive del proyecto a la que solo tiene acceso Alex, y solo se usará para
+el trabajo de máster."""
+
+PRIVACY_MANUAL = """Los datos se quedan en tu PC hasta que tú los envías con 2_ENVIAR_DATOS.bat,
+y solo se usarán para el trabajo de máster."""
+
+
+def kit_text(path: Path, player: str, auto_upload: bool) -> bytes:
     """Textos del kit: .ps1 en UTF-8 con BOM (PowerShell 5.1), .bat en ASCII, .txt en UTF-8 con BOM; todos CRLF."""
-    text = path.read_text(encoding="utf-8-sig").replace("{PLAYER_ID}", player)
+    text = path.read_text(encoding="utf-8-sig")
+    text = text.replace("{UPLOAD_SECTION}", UPLOAD_AUTO if auto_upload else UPLOAD_MANUAL)
+    text = text.replace("{PRIVACY_SENTENCE}", PRIVACY_AUTO if auto_upload else PRIVACY_MANUAL)
+    text = text.replace("{PLAYER_ID}", player)
     text = text.replace("\r\n", "\n").replace("\n", "\r\n")
     if path.suffix == ".bat":
         return text.encode("ascii")
     return b"\xef\xbb\xbf" + text.encode("utf-8")
 
 
-def make_kit(player: str, api: dict[str, bytes], dll: bytes, version: str, api_zip_sha: str) -> Path:
+def make_kit(player: str, api: dict[str, bytes], dll: bytes, version: str, api_zip_sha: str, upload_url: str) -> Path:
     top = f"HKTelemetry_{player}"
-    settings = json.dumps({"PlayerId": player, "SampleHz": 60, "HideHud": False, "Debug": False}, indent=2).encode()
+    settings = json.dumps({"PlayerId": player, "SampleHz": 60, "HideHud": False, "Debug": False,
+                           "UploadUrl": upload_url, "AutoUpload": True}, indent=2).encode()
     api_license = (ROOT / "reference" / "modding-api" / "LICENSE")
     license_bytes = api_license.read_bytes() if api_license.exists() else (
         b"MIT License - Copyright (c) 2017 seanpr96, iamwyza, firzen\r\nhttps://github.com/hk-modding/api/blob/master/LICENSE\r\n")
@@ -150,6 +184,7 @@ def make_kit(player: str, api: dict[str, bytes], dll: bytes, version: str, api_z
         "kit_version": version,
         "mod_version": version,
         "player_id": player,
+        "auto_upload": bool(upload_url),
         "game": {
             "unity_prefix": UNITY_PREFIX,
             "vanilla_assembly_csharp_sha256": VANILLA_AC_SHA256,
@@ -167,10 +202,10 @@ def make_kit(player: str, api: dict[str, bytes], dll: bytes, version: str, api_z
     DIST.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         for bat in sorted(KIT_SRC.glob("*.bat")):
-            z.writestr(f"{top}/{bat.name}", kit_text(bat, player))
-        z.writestr(f"{top}/LEEME.txt", kit_text(KIT_SRC / "LEEME.txt", player))
+            z.writestr(f"{top}/{bat.name}", kit_text(bat, player, bool(upload_url)))
+        z.writestr(f"{top}/LEEME.txt", kit_text(KIT_SRC / "LEEME.txt", player, bool(upload_url)))
         for ps1 in sorted((KIT_SRC / "scripts").glob("*.ps1")):
-            z.writestr(f"{top}/scripts/{ps1.name}", kit_text(ps1, player))
+            z.writestr(f"{top}/scripts/{ps1.name}", kit_text(ps1, player, bool(upload_url)))
         z.writestr(f"{top}/files/manifest.json", json.dumps(manifest, indent=2))
         for n, b in sorted(api.items()):
             z.writestr(f"{top}/files/api/{n}", b)
@@ -185,16 +220,25 @@ def main() -> int:
     ap.add_argument("players", nargs="+", help="códigos de jugador (P01 P02 ... o rangos P01-P10)")
     ap.add_argument("--api-zip", type=Path, help=f"ruta a {API_ZIP_NAME} (por defecto se descarga a dist/cache)")
     ap.add_argument("--no-build", action="store_true", help="no recompilar; usar bin/Release/net472/HKTelemetry.dll")
+    ap.add_argument("--upload-url", default="", help="dirección /exec del receptor de Apps Script (vacío = sin envío automático)")
     args = ap.parse_args()
 
     players = parse_players(args.players)
+    if args.upload_url and not UPLOAD_RE.fullmatch(args.upload_url):
+        sys.exit("--upload-url tiene que ser la dirección de la aplicación web: https://script.google.com/macros/s/<id>/exec")
+    if not args.upload_url:
+        print("AVISO: kit sin envío automático (falta --upload-url): los datos solo se envían con 2_ENVIAR_DATOS.bat")
+    else:
+        odd = [p for p in players if not re.fullmatch(r"P\d{2}", p)]
+        if odd:
+            print(f"AVISO: el receptor (server/Code.gs, ALLOWED_PLAYER) solo acepta P00-P99; rechazaría {odd}")
     api_zip = get_api_zip(args.api_zip)
     api = api_files_from_zip(api_zip)
     dll = build_mod(args.no_build)
     version = mod_version()
     print(f"Mod {version} | API v77: {len(api)} ficheros | zip API sha256 {sha256(api_zip)[:16]}...")
     for p in players:
-        out = make_kit(p, api, dll, version, sha256(api_zip))
+        out = make_kit(p, api, dll, version, sha256(api_zip), args.upload_url)
         print(f"  {out.relative_to(ROOT)}  ({out.stat().st_size / 1e6:.1f} MB)")
     return 0
 

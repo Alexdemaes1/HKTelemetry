@@ -43,12 +43,7 @@ JUGAR
 
 ENVIAR LOS DATOS
 ----------------
-1. Cierra Hollow Knight.
-2. Doble clic en 2_ENVIAR_DATOS.bat.
-3. Aparece un zip en tu Escritorio (HKTelemetry_{PLAYER_ID}_fecha.zip).
-   Envíaselo a Alex por WhatsApp, Drive, correo... como te venga mejor.
-Puedes enviarlos cuando quieras y las veces que quieras; se envía todo lo
-grabado hasta ese momento.
+{UPLOAD_SECTION}
 
 
 DESINSTALAR
@@ -69,9 +64,9 @@ QUÉ DATOS SE RECOGEN
 - Datos técnicos: fps, resolución, versión del juego y otros mods instalados.
 
 Todo se identifica solo con tu código {PLAYER_ID}. No se guarda tu nombre, ni tu
-cuenta de Steam, ni nada de fuera de Hollow Knight. Los datos se quedan en tu PC
-hasta que tú los envías con 2_ENVIAR_DATOS.bat, y solo se usarán para el trabajo
-de máster. Si en algún momento quieres que se borren tus datos, díselo a Alex.
+cuenta de Steam, ni nada de fuera de Hollow Knight.
+{PRIVACY_SENTENCE}
+Si en algún momento quieres que se borren tus datos, díselo a Alex.
 
 
 SI ALGO VA MAL

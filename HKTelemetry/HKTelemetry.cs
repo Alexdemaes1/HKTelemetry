@@ -63,6 +63,7 @@ namespace HKTelemetry
                 Step("hook.env", EnvRecorder.Hook);
                 Step("hook.playerdata", PlayerDataRecorder.Hook);
                 Step("hook.map", MapRecorder.Hook);
+                Step("init.upload", () => Uploader.Start(SessionManager.Root));
                 Log($"Grabando en {SessionManager.Root}");
             }
             catch (Exception e)

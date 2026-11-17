@@ -29,6 +29,9 @@ namespace HKTelemetry
 
                 Option("Modo debug", new[] { "No", "Sí" }, "Muestra contadores en pantalla",
                     i => s.Debug = i == 1, () => s.Debug ? 1 : 0),
+
+                Option("Enviar datos automáticamente", new[] { "Sí", "No" }, "Al terminar cada partida, desde el menú",
+                    i => { s.AutoUpload = i == 0; Session.Uploader.Poke(); }, () => s.AutoUpload ? 0 : 1),
             };
         }
 

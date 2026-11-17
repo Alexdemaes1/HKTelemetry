@@ -47,4 +47,7 @@ comprobada por hash). Cada participante descomprime y ejecuta:
   `ModLog.txt` (sin la ruta de usuario de Windows).
 - `3_DESINSTALAR.bat`: quita el mod y, si la puso el kit, la API, dejando el juego como estaba.
 
+Con `--upload-url` el mod envía cada sesión solo a una carpeta de Google Drive al terminarla
+(ver [docs/upload-setup.md](docs/upload-setup.md)); sin ella, los datos llegan con `2_ENVIAR_DATOS.bat`.
+
 Para validar lo recibido: descomprimir y `python tools/validate.py <carpeta_de_sesión> ...`.

@@ -21,6 +21,7 @@
 | `frames.csv` | append plano | `frames.csv.gz` |
 | `inputs.csv` | append plano | `inputs.csv.gz` |
 | `scenes/<scene>.json` | una vez por escena y sesión | sin cambios |
+| `upload.json` | — | v3: lo escribe el envío automático cuando la sesión llega entera al receptor (`utc`, `parts`, `bytes`, `zip_sha256`). Ver [upload-setup.md](upload-setup.md) |
 
 Una sesión que no llegó a cerrarse (crash) se comprime y se marca `end.reason = "recovered"`
 al arrancar el juego la siguiente vez.
@@ -58,7 +59,7 @@ al arrancar el juego la siguiente vez.
   },
   "save": { "slot": 1, "file_sha256": "…", "start_kind": "load|new_game|new_game_steel_soul|new_game_godseeker" },
   "display": { "width": 1920, "height": 1080, "fullscreen_mode": "…", "vsync": 1, "target_fps": 60 },
-  "settings": { "sample_hz": 60, "hide_hud": false, "debug": false },
+  "settings": { "sample_hz": 60, "hide_hud": false, "debug": false, "auto_upload": true },
   "start_utc": "2026-11-16T19:00:00Z",
   "end": { "utc": "…", "reason": "quit_menu|ending|menu|emergency_menu|permadeath|app_quit|restarted|recovered", "t_game": 0.0, "t_real": 0.0 },
   "progress_start": { /* sección 3.1 */ },
@@ -414,6 +415,6 @@ Se genera en el primer `scene_enter` de cada escena en la sesión, desde
 
 ## Changelog
 
-- **v3** (17/11/2026): `frames.csv` (§5) e `inputs.csv` (§6) implementados, con la cabecera exacta y búferes circulares sin asignaciones; evento `device` con `gamepad` y uno siempre al empezar; `game.other_mods` en session.json; `experience.steam_playtime_source` y `steam_accounts`; contadores `frames`/`dropped_frames`/`inputs`/`dropped_inputs`. Sin cambios en `events.jsonl` salvo `device`.
+- **v3** (17/11/2026): `frames.csv` (§5) e `inputs.csv` (§6) implementados, con la cabecera exacta y búferes circulares sin asignaciones; evento `device` con `gamepad` y uno siempre al empezar; `game.other_mods` en session.json; `experience.steam_playtime_source` y `steam_accounts`; envío automático a Drive (`settings.auto_upload`, `upload.json`); contadores `frames`/`dropped_frames`/`inputs`/`dropped_inputs`. Sin cambios en `events.jsonl` salvo `device`.
 - **v2** (17/11/2026): eventos de mapa (§4.7); `perf.mod_us_*` mide todo el tiempo del mod (hooks incluidos); `hit_dealt.hp_reset`; `death`/`hazard_respawn` llevan la fuente del golpe letal y se emiten después de su `hit_taken`; el `scene_exit` de «Guardar y salir» se emite al llegar a `Quit_To_Menu` (una salida cancelada ya no deja rastro); `env_break` solo cuando el objeto se rompe de verdad; motivo `new_game` para `Opening_Sequence → Tutorial_01`.
 - **v1** (16/11/2026): esquema inicial, verificado contra el código descompilado de la 1.5.78. Experiencia automática (§3.2) en lugar de autodeclarada; 60 Hz por defecto.

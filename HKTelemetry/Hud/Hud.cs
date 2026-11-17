@@ -47,7 +47,7 @@ namespace HKTelemetry.Hud
         private float _lastEventsTime;
         private float _eventsPerSec;
         private float _nextDebug;
-        private string _titleLine, _titlePid;
+        private string _titleLine, _titlePid, _titleUpload;
         private string _sessionId, _sessionShort;
         private int _errCode = -1;          // qué error hay mostrado (para no rehacer el mensaje)
         private long _errValue = -1;
@@ -191,11 +191,15 @@ namespace HKTelemetry.Hud
             if (onTitle)
             {
                 RetryTrajan(now);
-                if (_titleLine == null || !ReferenceEquals(_titlePid, settings.PlayerId))
+                // StatusText devuelve strings constantes salvo con sesiones pendientes: comparar el valor.
+                string upload = Session.Uploader.StatusText();
+                if (_titleLine == null || !ReferenceEquals(_titlePid, settings.PlayerId) || upload != _titleUpload)
                 {
                     _titlePid = settings.PlayerId;
+                    _titleUpload = upload;
                     _titleLine = $"HKTelemetry v{HKTelemetry.VersionString}  -  grabando como {settings.PlayerId}  -  " +
-                                 $"juego 1.5.78 {(Unsupported ? "NO SOPORTADO" : "OK")}";
+                                 $"juego 1.5.78 {(Unsupported ? "NO SOPORTADO" : "OK")}" +
+                                 (upload != null ? "  -  " + upload : "");
                     _title.text = _titleLine;
                 }
             }

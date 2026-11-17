@@ -51,6 +51,8 @@ namespace HKTelemetry.Session
         public static string SessionId => _s?.Id;
         public static string Kind => _s?.Kind;
         public static TelemetryWriter Writer => _s?.Writer;
+        /// <summary>Carpeta de la sesión abierta (null si no hay). La lee el hilo de envío.</summary>
+        public static volatile string CurrentDir;
         public static RowRing<Recorders.FrameRow> FrameSink => _s?.Frames;
         public static RowRing<Recorders.InputRow> InputSink => _s?.Inputs;
         /// <summary>Tipo del último evento emitido (overlay de debug).</summary>
@@ -102,7 +104,10 @@ namespace HKTelemetry.Session
                 Frames = frames,
                 Inputs = inputs,
             };
+            s.Writer.OnFinished = Uploader.Poke; // enviar la sesión en cuanto esté cerrada y comprimida
             _s = s;
+            CurrentDir = dir;
+            Uploader.Cancel(); // si estaba subiendo algo, se corta: empieza a jugar
 
             var gm = GameManager.UnsafeInstance;
             s.Game = Safe.Run("session.game", GameInfo, null);
@@ -168,7 +173,9 @@ namespace HKTelemetry.Session
             s.EndTReal = Clock.TReal;
             WriteSessionJson();
             _s = null;
+            CurrentDir = null;
             s.Writer.Stop(compress: true, joinMs: appQuit ? 3000 : 0);
+            Uploader.Poke(); // otras sesiones pendientes; esta avisa ella misma al terminar (OnFinished)
         }
 
         /// <summary>
@@ -251,6 +258,7 @@ namespace HKTelemetry.Session
                     ["settings"] = new Dictionary<string, object>
                     {
                         ["sample_hz"] = FrameRecorder.EffectiveHz, // fijada al empezar la sesión
+                        ["auto_upload"] = Uploader.Enabled,
                         ["hide_hud"] = HKTelemetry.Settings.HideHud,
                         ["debug"] = HKTelemetry.Settings.Debug,
                     },

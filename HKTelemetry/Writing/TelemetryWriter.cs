@@ -55,6 +55,9 @@ namespace HKTelemetry.Writing
 
         public string Dir { get; }
         public bool Finished { get; private set; }
+
+        /// <summary>Se llama en el hilo de escritura cuando todo está cerrado y comprimido (p. ej. para enviar la sesión).</summary>
+        public Action OnFinished;
         public int WriteErrors => Volatile.Read(ref _writeErrors);
         public string LastError { get; private set; }
 
@@ -226,6 +229,7 @@ namespace HKTelemetry.Writing
                 catch (Exception e) { Fail("status", e); }
             }
             Finished = true;
+            try { OnFinished?.Invoke(); } catch (Exception e) { Safe.Report("writer.finished", e); }
         }
 
         private void DrainAll()

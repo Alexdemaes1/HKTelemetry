@@ -24,5 +24,14 @@ namespace HKTelemetry
 
         /// <summary>Overlay de depuración (contadores, tamaños, Hz reales).</summary>
         public bool Debug = false;
+
+        /// <summary>
+        /// Dirección del receptor de datos (Apps Script, server/Code.gs). Viene en el kit; vacía = sin envío
+        /// automático (desarrollo). No es una clave: solo permite SUBIR trozos con el formato del mod.
+        /// </summary>
+        public string UploadUrl = "";
+
+        /// <summary>Enviar las sesiones automáticamente al terminar (si hay UploadUrl).</summary>
+        public bool AutoUpload = true;
     }
 }
