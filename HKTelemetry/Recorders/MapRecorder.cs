@@ -71,7 +71,9 @@ namespace HKTelemetry.Recorders
         public static void OnControlReady()
         {
             if (_invClosedState == null) _captureClosedState = true;
-            if (!_discoveryDone) { _discoveryDone = true; Safe.Run("map.discovery", Discovery); }
+            // Volcado de nombres de FSM a ModLog: ya cumplió su función (17/11/2026, schema.md §4.7). Solo en modo
+            // debug, porque recorre cientos de FSM en el primer frame jugable (pico de ~14 ms en la carga).
+            if (!_discoveryDone && HKTelemetry.Settings.Debug) { _discoveryDone = true; Safe.Run("map.discovery", Discovery); }
         }
 
         // ---------------- apertura y cierre ----------------

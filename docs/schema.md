@@ -241,6 +241,17 @@ Cuándo y cómo se abre el mapa. Fuente: los métodos públicos de `GameMap` que
 | `map_marker` | `op` (`place`/`remove`), `before`, `after` | `On.MapMarkerMenu.PlaceMarker/RemoveMarker`, solo si cambia el número de marcadores |
 | `fsm_state` (`fsm: "Inventory"`) | `from, to` | sondeo de `GameManager.inventoryFSM.ActiveStateName`: paneles del inventario. Los nombres de estado solo existen en los assets: se escriben una vez por arranque a `ModLog.txt` |
 
+**Comprobado en el juego (sesión `20261117_175815`):**
+- El Caballero **puede andar con el mapa rápido abierto**. Si cruza a otra sala sin soltar el botón, el juego oculta
+  el mapa sin llamar a `CloseQuickMap` y el cierre sale con `reason: scene_transition` (es un cierre real, no una pérdida).
+- En el inventario, `CloseQuickMap` salta al salir de la vista detallada del mapa (primer «cancelar»), antes de
+  que se cierre el inventario. Por eso un `map_close` de `mode: inventory` suele llevar `reason: close_quick_map`;
+  `inventory_closed` queda para cuando el inventario se cierra directamente.
+- Estados del FSM `Inventory Control` vistos: `Closed` → `Open Current Pane` → `Opened`; `Tween Panes` al cambiar de
+  panel; `Close` → `Closed` al cerrar. La lista completa sale en `ModLog.txt` con el modo debug activado.
+- El FSM `Spell Control` pasa a `Button Down` también con el botón de cancelar dentro del inventario (en mando, el
+  mismo botón que lanza hechizos): filtrar esos `fsm_state` mientras el inventario está abierto.
+
 El tiempo con el mapa abierto cuenta como tiempo de juego (`t_game`): el juego no se pausa. Las pulsaciones de
 `quickMap` y `openInventory` irán además en `inputs.csv` (fase 5).
 

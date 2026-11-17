@@ -29,11 +29,13 @@ Verificación de la API contra el código, con referencias `archivo:línea`: [ap
 | 1 | ✅ probada en 3 sesiones (escenas, puertas FSM, ciervo, Dream Gate, partida nueva) |
 | 2 | 🟡 código hecho y probado en 1 sesión (Falso Caballero, Chamán); revisión adversarial aplicada |
 | 3 | 🟡 código hecho y probado en 1 sesión (`boss_defeated`, `ability_gained`, `item_got`) |
-| Mapa (nuevo, schema v2) | 🟡 código hecho, **sin probar en el juego** |
+| Mapa (nuevo, schema v2) | ✅ probado el 17/11 (mapa rápido andando y quieto, inventario, desplazamiento) |
 | 7 (HUD) | 🟡 adelantada: punto, línea de título y overlay de debug, **sin probar en el juego** |
 | 4, 5, 6, 8 | ⏳ pendientes |
 
-**Abierto:** input lag percibido. Primera medida (v1, solo el Runner): ~42 µs/frame de media y picos de ~3 ms cada 15–60 s, probablemente pausas del recolector de basura. En v2 se han quitado las fuentes de basura detectadas y `perf` mide ya todo el tiempo del mod (hooks incluidos): falta una sesión para confirmarlo.
+**Rendimiento (sesión `20261117_175815`, con debug activado):** el mod cuesta ~63 µs/frame de media jugando (~1 % de un frame a 180 fps). Los picos de **3,06 ms** que salen cada ~15 s (o múltiplos) son el **recolector de basura incremental de Unity**: `boot.config` del juego tiene `gc-max-time-slice=3`, la duración es siempre la misma y caen también en segundos sin ningún evento. Es la recolección del juego entero que a veces arranca dentro de una asignación del mod; el frame dura ~6 ms en vez de 5,6, sin perder frames. Los dos picos grandes (24 ms y 14 ms) son de una sola vez, en la carga de partida (compilación JIT del mod y volcado de FSM, que ahora solo se hace en modo debug).
+
+**Abierto:** input lag percibido. Las medidas no lo explican; falta la prueba A/B (un rato con el mod desactivado en la misma zona).
 
 ### Próxima sesión de prueba (pendiente)
 
