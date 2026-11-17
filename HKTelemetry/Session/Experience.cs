@@ -129,15 +129,35 @@ namespace HKTelemetry.Session
             string userdata = Path.Combine(root, "userdata");
             if (!Directory.Exists(userdata)) { Set("steam_playtime_min", null); return; }
 
-            int? best = null;
+            // Cuenta que está jugando: HKCU\Software\Valve\Steam\ActiveProcess\ActiveUser (id de cuenta,
+            // el mismo número que la carpeta userdata/<id>). Si no se puede leer, el máximo entre cuentas.
+            uint active = 0;
+            try
+            {
+                using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Valve\Steam\ActiveProcess"))
+                {
+                    object v = key?.GetValue("ActiveUser");
+                    if (v is int i) active = unchecked((uint)i);
+                }
+            }
+            catch { /* sin registro (Linux/Proton) o sin permiso */ }
+
+            int? best = null, mine = null;
+            int accounts = 0;
             foreach (string user in Directory.GetDirectories(userdata))
             {
                 string vdf = Path.Combine(Path.Combine(user, "config"), "localconfig.vdf");
                 if (!File.Exists(vdf)) continue;
                 int? minutes = ParsePlaytime(File.ReadAllText(vdf));
-                if (minutes.HasValue && (!best.HasValue || minutes > best)) best = minutes;
+                if (!minutes.HasValue) continue;
+                accounts++;
+                if (!best.HasValue || minutes > best) best = minutes;
+                if (active != 0 && Path.GetFileName(user) == active.ToString()) mine = minutes;
             }
-            Set("steam_playtime_min", best);
+            // No se guardan ids de cuenta: solo los minutos, de dónde salen y cuántas cuentas tienen el juego.
+            Set("steam_playtime_min", mine ?? best);
+            Set("steam_playtime_source", mine.HasValue ? "active_user" : best.HasValue ? "max_fallback" : null);
+            Set("steam_accounts", accounts);
         }
 
         /// <summary>

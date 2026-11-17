@@ -308,7 +308,36 @@ namespace HKTelemetry.Session
                 ["build_revision"] = bm?.Revision,
                 ["save_version"] = pd?.version,
                 ["platform"] = Application.platform.ToString(),
+                ["other_mods"] = OtherMods(),
             };
+        }
+
+        /// <summary>
+        /// Otros mods ("Nombre versión"): pueden cambiar la jugabilidad, así que el análisis tiene que poder
+        /// filtrar esas sesiones. Marcas: " [off]" desactivado en el menú, " [error]" cargado con error.
+        /// Los que fallaron al construirse no tienen instancia ni nombre: van como "[error] x N".
+        /// </summary>
+        private static List<string> OtherMods()
+        {
+            var list = new List<string>();
+            var enabled = new HashSet<IMod>();
+            var ok = new HashSet<IMod>();
+            foreach (var m in ModHooks.GetAllMods(onlyEnabled: true, allowLoadError: false)) if (m != null) enabled.Add(m);
+            foreach (var m in ModHooks.GetAllMods(onlyEnabled: false, allowLoadError: false)) if (m != null) ok.Add(m);
+            int unnamed = 0;
+            foreach (var m in ModHooks.GetAllMods(onlyEnabled: false, allowLoadError: true))
+            {
+                if (m == null) { unnamed++; continue; }
+                if (m is HKTelemetry) continue;
+                string name = null, version = null;
+                try { name = m.GetName(); } catch { }
+                try { version = m.GetVersion(); } catch { }
+                string tag = !ok.Contains(m) ? " [error]" : !enabled.Contains(m) ? " [off]" : "";
+                list.Add((name ?? m.GetType().Name) + (version != null ? " " + version : "") + tag);
+            }
+            list.Sort(StringComparer.Ordinal);
+            if (unnamed > 0) list.Add("[error] x " + unnamed);
+            return list;
         }
 
         private static Dictionary<string, object> DisplayInfo() => new Dictionary<string, object>

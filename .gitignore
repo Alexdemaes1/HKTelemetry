@@ -18,3 +18,8 @@ __pycache__/
 *.pyc
 .venv/
 *.parquet
+
+# Kits generados (tools/make_kit.py) y salidas de la compilación Release
+dist/
+HKTelemetry/Output/
+HKTelemetry/Version.txt

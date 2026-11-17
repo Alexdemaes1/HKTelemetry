@@ -1,0 +1,89 @@
+HKTelemetry - mod de Hollow Knight para un trabajo de máster de IA
+Tu código de jugador: {PLAYER_ID}
+==================================================================
+
+QUÉ ES
+------
+Un mod que SOLO apunta cómo juegas a Hollow Knight (por dónde vas, cuándo saltas,
+atacas, recibes golpes...) para entrenar modelos de IA en un trabajo de máster.
+No cambia nada del juego: ni dificultad, ni ayudas, ni tus partidas.
+
+
+ANTES DE EMPEZAR (unos 5 minutos)
+---------------------------------
+Hace falta Windows 10 u 11 y Hollow Knight comprado en Steam.
+
+1. Cambia el juego a la versión 1.5.78 (el mod solo funciona con esa):
+   Steam > Biblioteca > clic derecho en Hollow Knight > Propiedades >
+   "Versiones de juego y betas" > elige "1.5.78.11833" (versión anterior).
+   Espera a que Steam termine de descargarla.
+
+2. Descomprime este zip: clic derecho > "Extraer todo...".
+   (Si ejecutas los .bat desde dentro del zip sin extraerlo, no funcionarán.)
+
+3. Cierra Hollow Knight si está abierto y haz doble clic en 1_INSTALAR.bat.
+   - Si Windows dice "Windows protegió su PC": pulsa "Más información" y
+     después "Ejecutar de todas formas".
+   - Te enseña qué datos se guardan y te pide confirmación (S).
+   - Antes de tocar nada guarda una copia de tus partidas y de los ficheros
+     del juego que cambia.
+
+
+JUGAR
+-----
+- Abre Hollow Knight desde Steam como siempre. En el menú principal, abajo,
+  verás "HKTelemetry v... - grabando como {PLAYER_ID}".
+- Juega como juegues normalmente: tu partida de siempre o una nueva, el rato
+  que quieras. Cuanto más juegues, mejor, pero no hace falta forzarlo.
+- Arriba a la derecha hay un punto pequeño:
+    verde parpadeando = grabando     gris = en pausa o en menús
+    ROJO con un mensaje = algo falla: haz una captura y avisa a Alex.
+  Se puede ocultar (salvo el rojo) en Opciones > Mods > HKTelemetry.
+
+
+ENVIAR LOS DATOS
+----------------
+1. Cierra Hollow Knight.
+2. Doble clic en 2_ENVIAR_DATOS.bat.
+3. Aparece un zip en tu Escritorio (HKTelemetry_{PLAYER_ID}_fecha.zip).
+   Envíaselo a Alex por WhatsApp, Drive, correo... como te venga mejor.
+Puedes enviarlos cuando quieras y las veces que quieras; se envía todo lo
+grabado hasta ese momento.
+
+
+DESINSTALAR
+-----------
+1. Cierra Hollow Knight y envía antes tus datos (paso anterior).
+2. Doble clic en 3_DESINSTALAR.bat: quita el mod y deja el juego como estaba.
+3. Para volver a la última versión del juego: Steam > Propiedades >
+   "Versiones de juego y betas" > "Ninguna".
+
+
+QUÉ DATOS SE RECOGEN
+--------------------
+- Lo que pasa en la partida: salas por las que pasas, combates, vida, alma,
+  objetos, jefes, mapa, muertes...
+- La posición del personaje y los botones que pulsas (60 veces por segundo).
+- Tu experiencia previa con el juego: horas jugadas a Hollow Knight en Steam,
+  logros conseguidos y el progreso de tus partidas guardadas.
+- Datos técnicos: fps, resolución, versión del juego y otros mods instalados.
+
+Todo se identifica solo con tu código {PLAYER_ID}. No se guarda tu nombre, ni tu
+cuenta de Steam, ni nada de fuera de Hollow Knight. Los datos se quedan en tu PC
+hasta que tú los envías con 2_ENVIAR_DATOS.bat, y solo se usarán para el trabajo
+de máster. Si en algún momento quieres que se borren tus datos, díselo a Alex.
+
+
+SI ALGO VA MAL
+--------------
+- El juego no arranca después de instalar: ejecuta 3_DESINSTALAR.bat, o en
+  Steam > Propiedades > Archivos instalados > "Verificar integridad de los
+  archivos". Luego avisa a Alex.
+- El instalador dice que la versión no es la correcta: revisa el paso 1.
+- Cualquier otra cosa: captura de pantalla de la ventana y a Alex.
+
+Gracias por ayudar :)
+
+--
+Este kit incluye la Hollow Knight Modding API v77 (https://github.com/hk-modding/api),
+licencia MIT (ver files\api\LICENSE_ModdingAPI.txt).
