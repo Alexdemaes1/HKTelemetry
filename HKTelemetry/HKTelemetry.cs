@@ -6,6 +6,9 @@ using HKTelemetry.Util;
 using Modding;
 using UnityEngine;
 
+// Pruebas fuera del juego (búferes de frames/inputs, escritor). No afecta al mod.
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("HKTelemetry.RingTest")]
+
 namespace HKTelemetry
 {
     /// <summary>
@@ -15,7 +18,7 @@ namespace HKTelemetry
     public partial class HKTelemetry : Mod, IGlobalSettings<GlobalSettings>
     {
         /// <summary>Versión del formato de datos. Ver docs/schema.md.</summary>
-        public const int SchemaVersion = 2;
+        public const int SchemaVersion = 3;
 
         /// <summary>Versión de Unity de la build 1.5.78.11833 soportada.</summary>
         public const string ExpectedUnityVersion = "2020.2.2f1";

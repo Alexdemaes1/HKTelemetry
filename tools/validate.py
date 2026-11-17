@@ -11,6 +11,7 @@ Solo usa la biblioteca estándar.
 from __future__ import annotations
 
 import argparse
+import csv
 import gzip
 import json
 import os
@@ -18,7 +19,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-SCHEMA_VERSIONS = (1, 2)
+SCHEMA_VERSIONS = (1, 2, 3)
 DEFAULT_ROOT = Path(os.environ.get("USERPROFILE", "~")).expanduser() / "AppData/LocalLow/Team Cherry/Hollow Knight/HKTelemetry"
 
 COMMON_FIELDS = ("seq", "t_game", "t_real", "frame", "scene", "type", "p")
@@ -97,7 +98,7 @@ def check_session_json(folder: Path, r: Report) -> dict | None:
         r.err(f"unity_version={game.get('unity_version')} (no es la 1.5.78)")
 
     c = s.get("counters") or {}
-    for k in ("dropped_events", "write_errors", "hook_errors"):
+    for k in ("dropped_events", "dropped_frames", "dropped_inputs", "write_errors", "hook_errors"):
         if c.get(k):
             r.err(f"counters.{k} = {c[k]}")
 
@@ -110,11 +111,11 @@ def check_session_json(folder: Path, r: Report) -> dict | None:
     return s
 
 
-def check_events(folder: Path, s: dict | None, r: Report) -> None:
+def check_events(folder: Path, s: dict | None, r: Report) -> list[dict]:
     path = find(folder, "events.jsonl")
     if path is None:
         r.err("falta events.jsonl(.gz)")
-        return
+        return []
     if path.suffix != ".gz" and s and s.get("end"):
         r.warn("events.jsonl sin comprimir en una sesión cerrada")
 
@@ -134,7 +135,7 @@ def check_events(folder: Path, s: dict | None, r: Report) -> None:
 
     if not events:
         r.err("events.jsonl vacío")
-        return
+        return []
 
     types = Counter(e.get("type") for e in events)
     r.info.append(f"{len(events)} eventos: " + ", ".join(f"{k}={v}" for k, v in types.most_common()))
@@ -172,13 +173,14 @@ def check_events(folder: Path, s: dict | None, r: Report) -> None:
     check_gameplay(events, r)
     summarize_perf(events, r)
     check_pd_files(folder, s, r)
+    return events
 
 
 KNOWN_TYPES = {
     "session_start", "session_end", "scene_exit", "scene_enter", "control_ready", "game_state", "perf",
     "hit_taken", "hazard_respawn", "death", "hit_dealt", "enemy_hp_change", "enemy_killed", "enemy_spawn",
     "focus", "fsm_state", "boss_scene", "env_break", "pd_change", "pd_list", "boss_defeated",
-    "ability_gained", "item_got", "map_open", "map_close", "map_pan", "map_marker",
+    "ability_gained", "item_got", "map_open", "map_close", "map_pan", "map_marker", "device",
 }
 
 
@@ -241,6 +243,187 @@ def check_map(events: list[dict], r: Report) -> None:
         r.warn(f"map_open seq={opened['seq']} sin map_close")
     if uses:
         r.info.append("mapa: " + ", ".join(f"{k}={v}" for k, v in uses.items()) + f", tiempo total {total:.0f} s")
+
+
+FRAMES_HEADER = ("seq,t_game,t_real,frame,play_time,scene,gs,x,y,vx,vy,hp,hp_max,blue,soul,soul_reserve,"
+                 "hero_state,cstate,facing,accepting,time_scale,input_bitmask,move_x,move_y,gap")
+INPUTS_HEADER = "seq,t_game,t_real,frame,action,ev,x,y,device,accepting"
+INPUT_ACTIONS = ("left", "right", "up", "down", "jump", "attack", "dash", "superDash", "cast", "quickCast",
+                 "focus", "dreamNail", "quickMap", "openInventory", "pause", "evade")
+
+
+def read_csv(folder: Path, name: str, header: str, s: dict | None, r: Report) -> list[list[str]] | None:
+    path = find(folder, name)
+    if path is None:
+        # Sesiones grabadas antes de que la cabecera se escribiera siempre: sin filas no había fichero.
+        c = (s or {}).get("counters") or {}
+        base = name.split(".")[0]
+        if c.get(base) == 0 and not c.get("dropped_" + base):
+            r.warn(f"falta {name}(.gz), pero la sesión no generó filas")
+            return []
+        r.err(f"falta {name}(.gz)")
+        return None
+    if path.suffix != ".gz" and s and s.get("end"):
+        r.warn(f"{name} sin comprimir en una sesión cerrada")
+    with open_text(path) as f:
+        text = f.read()
+    # Una última línea sin '\n' es una fila cortada por un cierre brusco: se descarta con aviso.
+    cut = bool(text) and not text.endswith("\n")
+    rows = list(csv.reader(text.splitlines()))
+    if not rows:
+        r.err(f"{name} vacío (ni cabecera)")
+        return None
+    if ",".join(rows[0]) != header:
+        r.err(f"{name}: cabecera distinta de la del esquema: {','.join(rows[0])[:120]}")
+        return None
+    body = rows[1:]
+    if cut and body:
+        r.warn(f"{name}: última fila cortada (cierre brusco), se ignora")
+        body.pop()
+    return body
+
+
+def check_seq(name: str, rows: list[list[str]], counter: str, dropped_counter: str, s: dict | None, r: Report) -> None:
+    """seq creciente; cada hueco es una fila descartada y tiene que cuadrar con los contadores."""
+    gaps = 0
+    prev = None
+    for row in rows:
+        q = int(row[0])
+        if prev is not None:
+            if q <= prev:
+                r.err(f"{name}: seq no crece ({prev} -> {q})")
+                return
+            gaps += q - prev - 1
+        prev = q
+    if rows and int(rows[0][0]) != 0:
+        gaps += int(rows[0][0])
+    c = (s or {}).get("counters") or {}
+    dropped = c.get(dropped_counter)
+    if gaps and not dropped:
+        r.err(f"{name}: {gaps} filas perdidas (huecos en seq) sin contar en counters.{dropped_counter}")
+    ended = s and s.get("end") and s["end"].get("reason") != "recovered"
+    if ended and c.get(counter) is not None and c[counter] != len(rows):
+        r.warn(f"counters.{counter}={c[counter]} pero hay {len(rows)} filas")
+
+
+def check_frames(folder: Path, s: dict | None, r: Report) -> None:
+    rows = read_csv(folder, "frames.csv", FRAMES_HEADER, s, r)
+    if rows is None:
+        return
+    if not rows:
+        r.warn("frames.csv sin filas")
+        return
+    bad_cols = [i for i, row in enumerate(rows) if len(row) != 25]
+    if bad_cols:
+        r.err(f"frames.csv: {len(bad_cols)} filas sin 25 columnas (primera: fila {bad_cols[0] + 2}); se ignoran")
+        rows = [row for row in rows if len(row) == 25]
+        if not rows:
+            return
+    check_seq("frames.csv", rows, "frames", "dropped_frames", s, r)
+
+    t_real = [float(row[2]) for row in rows]
+    t_game = [float(row[1]) for row in rows]
+    frame = [int(row[3]) for row in rows]
+    for i in range(1, len(rows)):
+        if t_real[i] + 1e-6 < t_real[i - 1] or t_game[i] + 1e-6 < t_game[i - 1]:
+            r.err(f"frames.csv: reloj que retrocede en seq={rows[i][0]}")
+            break
+        if frame[i] <= frame[i - 1]:
+            r.err(f"frames.csv: dos muestras en el mismo frame o frame que retrocede (seq={rows[i][0]})")
+            break
+
+    hz = ((s or {}).get("settings") or {}).get("sample_hz") or 60
+    period = 1.0 / hz
+    dts = sorted(t_real[i] - t_real[i - 1] for i in range(1, len(rows)))
+    med = dts[len(dts) // 2] if dts else 0.0
+    dur = t_real[-1] - t_real[0]
+    real_hz = (len(rows) - 1) / dur if dur > 0 else 0.0
+    late = sum(1 for d in dts if d > 2.5 * period)
+    if dts and abs(med - period) > 0.35 * period:
+        r.warn(f"frames.csv: intervalo mediano {med * 1000:.1f} ms (esperado {period * 1000:.1f} ms a {hz} Hz)")
+
+    gap = [row for row in rows if row[24] == "1"]
+    hero = [row for row in rows if row[24] == "0"]
+    for row in gap:
+        if any(row[k] for k in range(7, 20)):
+            r.err(f"frames.csv: fila gap con datos de héroe (seq={row[0]})")
+            break
+    bad_hp = 0
+    for row in hero:
+        if any(row[k] == "" for k in range(7, 20)):
+            r.err(f"frames.csv: fila con héroe y celdas vacías (seq={row[0]})")
+            break
+        hp, hp_max = int(row[11]), int(row[12])
+        if hp < 0 or hp > max(hp_max, 1) + 1:
+            bad_hp += 1
+    if bad_hp:
+        r.warn(f"frames.csv: {bad_hp} filas con hp fuera de [0, hp_max]")
+
+    playing = [row for row in hero if row[6] == "4"]
+    acc = sum(1 for row in playing if row[19] == "1")
+    ts0 = sum(1 for row in playing if float(row[20]) == 0.0)
+    pressed = sum(1 for row in playing if row[21] != "0")
+    r.info.append(
+        f"frames: {len(rows)} filas, {real_hz:.1f} Hz reales (mediana {med * 1000:.1f} ms, {late} huecos > {2.5 * period * 1000:.0f} ms), "
+        f"gap={len(gap)} | jugando: {len(playing)} filas, accepting {100 * acc / max(len(playing), 1):.0f}%, "
+        f"hit-stop {100 * ts0 / max(len(playing), 1):.1f}%, con botones {100 * pressed / max(len(playing), 1):.0f}%"
+    )
+
+
+def check_inputs(folder: Path, s: dict | None, events: list[dict], r: Report) -> None:
+    rows = read_csv(folder, "inputs.csv", INPUTS_HEADER, s, r)
+    if rows is None:
+        return
+    if not any(e.get("type") == "device" for e in events):
+        r.err("events.jsonl sin evento 'device' (debe haber uno al empezar la sesión)")
+    if not rows:
+        r.warn("inputs.csv sin filas (¿no se pulsó nada?)")
+        return
+    bad_cols = [i for i, row in enumerate(rows) if len(row) != 10]
+    if bad_cols:
+        r.err(f"inputs.csv: {len(bad_cols)} filas sin 10 columnas (primera: fila {bad_cols[0] + 2}); se ignoran")
+        rows = [row for row in rows if len(row) == 10]
+        if not rows:
+            return
+    check_seq("inputs.csv", rows, "inputs", "dropped_inputs", s, r)
+
+    state: dict[str, bool] = {}
+    downs: Counter = Counter()
+    downs_ok: Counter = Counter()
+    devices: Counter = Counter()
+    bad_pair = 0
+    for row in rows:
+        _, tg, tr, fr, action, ev, x, y, device, accepting = row
+        devices[device] += 1
+        if ev == "axis":
+            if action != "move" or x == "" or y == "":
+                r.err(f"inputs.csv: fila axis mal formada (seq={row[0]})")
+                return
+            continue
+        if action not in INPUT_ACTIONS or ev not in ("down", "up"):
+            r.err(f"inputs.csv: acción o evento desconocido '{action}/{ev}' (seq={row[0]})")
+            return
+        pressed = ev == "down"
+        if state.get(action, False) == pressed:
+            bad_pair += 1
+        state[action] = pressed
+        if pressed:
+            downs[action] += 1
+            if accepting == "1":
+                downs_ok[action] += 1
+    if bad_pair:
+        r.warn(f"inputs.csv: {bad_pair} down/up sin pareja")
+
+    dev_ev = [e for e in events if e.get("type") == "device"]
+    pads = sorted({(e.get("p") or {}).get("gamepad") for e in dev_ev if (e.get("p") or {}).get("to") == "pad"} - {None})
+    t_game = max((e.get("t_game") or 0) for e in events) if events else 0
+    minutes = t_game / 60 if t_game else 0
+    apm = f"{downs['attack'] / minutes:.0f}" if minutes else "-"
+    top = ", ".join(f"{a}={downs[a]}({downs_ok[a]})" for a, _ in downs.most_common(8))
+    r.info.append(
+        f"inputs: {len(rows)} filas, dispositivos {dict(devices)}{' ' + ','.join(pads) if pads else ''} | "
+        f"ataques/min de juego={apm} | pulsaciones (con heroe activo): {top}"
+    )
 
 
 def check_pd_files(folder: Path, s: dict | None, r: Report) -> None:
@@ -331,7 +514,10 @@ def check_scene_sequence(events: list[dict], r: Report) -> None:
 def validate(folder: Path) -> Report:
     r = Report(folder.name)
     s = check_session_json(folder, r)
-    check_events(folder, s, r)
+    events = check_events(folder, s, r)
+    if s and (s.get("schema_version") or 0) >= 3:
+        check_frames(folder, s, r)
+        check_inputs(folder, s, events, r)
     return r
 
 

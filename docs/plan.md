@@ -30,28 +30,30 @@ Verificación de la API contra el código, con referencias `archivo:línea`: [ap
 | 2 | 🟡 código hecho y probado en 1 sesión (Falso Caballero, Chamán); revisión adversarial aplicada |
 | 3 | 🟡 código hecho y probado en 1 sesión (`boss_defeated`, `ability_gained`, `item_got`) |
 | Mapa (nuevo, schema v2) | ✅ probado el 17/11 (mapa rápido andando y quieto, inventario, desplazamiento) |
-| 7 (HUD) | 🟡 adelantada: punto, línea de título y overlay de debug, **sin probar en el juego** |
-| 4, 5, 6, 8 | ⏳ pendientes |
+| 7 (HUD) | ✅ probado el 17/11: punto verde/gris, línea de título y overlay de debug |
+| 4 (`frames.csv`) y 5 (`inputs.csv`) | 🟡 código hecho (schema v3), revisión adversarial aplicada y pruebas fuera del juego OK; **sin probar en el juego** |
+| 6, 8 | ⏳ pendientes |
 
 **Rendimiento (sesión `20261117_175815`, con debug activado):** el mod cuesta ~63 µs/frame de media jugando (~1 % de un frame a 180 fps). Los picos de **3,06 ms** que salen cada ~15 s (o múltiplos) son el **recolector de basura incremental de Unity**: `boot.config` del juego tiene `gc-max-time-slice=3`, la duración es siempre la misma y caen también en segundos sin ningún evento. Es la recolección del juego entero que a veces arranca dentro de una asignación del mod; el frame dura ~6 ms en vez de 5,6, sin perder frames. Los dos picos grandes (24 ms y 14 ms) son de una sola vez, en la carga de partida (compilación JIT del mod y volcado de FSM, que ahora solo se hace en modo debug).
 
 **Abierto:** input lag percibido. Las medidas no lo explican; falta la prueba A/B (un rato con el mod desactivado en la misma zona).
 
-### Próxima sesión de prueba (pendiente)
+### Próxima sesión de prueba (pendiente): fases 4 y 5
 
-Build instalada: commit `9155bf7` (hash de la DLL comprobado). Pasos, unos 10–15 min:
+Build instalada con `frames.csv` e `inputs.csv` (schema v3). Pasos, unos 10 min:
 
-1. **Menú principal:** comprobar la línea de abajo (`HKTelemetry v0.1.0 - grabando como P00 - juego 1.5.78 OK`). En Mods → HKTelemetry, activar **Modo debug**.
-2. **Cargar partida:** el punto de arriba a la derecha debe ser **verde** y parpadear; en pausa, **gris**. Probar también «Indicador de grabación» desactivado (solo se oculta el verde/gris; el rojo siempre se ve).
-3. **Mapa rápido:** mantener Tab/LB varias veces, si se puede en zonas distintas.
-4. **Mapa del inventario:** abrir el inventario, ir a la pestaña del mapa, desplazarse y, si hay marcadores, poner uno.
-5. Mientras se juega, mirar `mod: … µs/frame` en el panel de debug y anotar si se sigue notando el input lag.
-6. **Guardar y salir**, **cerrar el juego** y pegar en el chat la salida de `python tools/validate.py --all`.
-7. Si se puede, copiar de `ModLog.txt` el bloque que empieza por `Descubrimiento de FSM` (sirve para nombrar los estados del inventario).
+1. Activar **Modo debug** (Mods → HKTelemetry). Cargar cualquier partida.
+2. En el panel de debug debe salir la línea `frames: N (≈60 Hz)  inputs: M`, con los dos números subiendo.
+3. Jugar 5 minutos con normalidad: moverse, saltar, atacar, dash, hechizos, curarse; abrir el inventario y pausar un momento.
+4. Mirar `mod: … µs/frame` (debería seguir alrededor de 60–70 µs).
+5. **Guardar y salir**, **cerrar el juego** y pegar en el chat la salida de `python tools/validate.py --all`.
 
-Qué se espera ver en `validate.py`: eventos `map_open`/`map_close` emparejados (modo `quick` o `inventory`), `map_pan`, eventos `perf` con `mod_us_avg` y `mod_us_max`, y 0 errores.
+Qué se espera ver en `validate.py` (sesión nueva): una línea `frames:` con ~60 Hz reales y pocos huecos, una línea
+`inputs:` con dispositivo `pad` y el tipo de mando, ataques por minuto y pulsaciones por acción, y 0 errores.
 
-Después de la prueba: fase 4 (`frames.csv` a 60 Hz), fase 5 (`inputs.csv`), fase 6 (catálogo de salas) y fase 8 (kit para participantes).
+Probado el 17/11: mapa (rápido e inventario) y HUD (punto, línea de título, debug).
+
+Después: fase 8 (kit para participantes), fase 6 (catálogo de salas) y `to_parquet.py`.
 
 ### Perfilado de jugadores (agresivo / pasivo / explorador…)
 

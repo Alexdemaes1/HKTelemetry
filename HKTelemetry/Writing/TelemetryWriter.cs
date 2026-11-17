@@ -40,9 +40,12 @@ namespace HKTelemetry.Writing
             public long Lines;
             public long Dropped;
             public long Bytes;   // tamaño del fichero plano, actualizado en el hilo de escritura
+            public long PendingTruncate = -1; // recorte pendiente antes de reabrir (−1 = ninguno)
         }
 
         private readonly Dictionary<string, Sink> _sinks = new Dictionary<string, Sink>();
+        private readonly List<RowSink> _rows = new List<RowSink>();
+        private readonly StringBuilder _rowSb = new StringBuilder(512); // solo hilo de escritura
         private readonly ConcurrentQueue<Action> _jobs = new ConcurrentQueue<Action>();
         private readonly AutoResetEvent _wake = new AutoResetEvent(false);
         private readonly Thread _thread;
@@ -56,28 +59,60 @@ namespace HKTelemetry.Writing
         public string LastError { get; private set; }
 
         /// <param name="sinks">nombre de fichero → cabecera CSV (null si no tiene) y tamaño máximo de cola.</param>
-        public TelemetryWriter(string dir, IEnumerable<(string name, string header, int maxQueue)> sinks)
+        /// <param name="rowSinks">ficheros CSV alimentados por búferes circulares (frames.csv, inputs.csv).</param>
+        public TelemetryWriter(string dir, IEnumerable<(string name, string header, int maxQueue)> sinks,
+                               IEnumerable<RowSink> rowSinks = null)
         {
             Dir = dir;
             Directory.CreateDirectory(dir);
             foreach (var (name, header, maxQueue) in sinks)
                 _sinks[name] = new Sink { Path = Path.Combine(dir, name), Header = header, MaxQueue = maxQueue };
+            if (rowSinks != null)
+                foreach (var r in rowSinks)
+                {
+                    r.Path = Path.Combine(dir, r.Name);
+                    r.Wake = _wake;
+                    _rows.Add(r);
+                }
 
             _thread = new Thread(Loop) { IsBackground = true, Name = "HKTelemetry.Writer", Priority = ThreadPriority.BelowNormal };
             _thread.Start();
         }
 
-        public long Lines(string sink) => _sinks.TryGetValue(sink, out var s) ? Interlocked.Read(ref s.Lines) : 0;
-        /// <summary>Bytes escritos en el fichero plano (sin leer el disco desde el hilo del juego).</summary>
-        public long Bytes(string sink) => _sinks.TryGetValue(sink, out var s) ? Interlocked.Read(ref s.Bytes) : 0;
+        public long Lines(string sink)
+        {
+            if (_sinks.TryGetValue(sink, out var s)) return Interlocked.Read(ref s.Lines);
+            var r = Row(sink);
+            return r != null ? Interlocked.Read(ref r.Lines) : 0;
+        }
 
-        public long Dropped(string sink) => _sinks.TryGetValue(sink, out var s) ? Interlocked.Read(ref s.Dropped) : 0;
+        /// <summary>Bytes escritos en el fichero plano (sin leer el disco desde el hilo del juego).</summary>
+        public long Bytes(string sink)
+        {
+            if (_sinks.TryGetValue(sink, out var s)) return Interlocked.Read(ref s.Bytes);
+            var r = Row(sink);
+            return r != null ? Interlocked.Read(ref r.Bytes) : 0;
+        }
+
+        public long Dropped(string sink)
+        {
+            if (_sinks.TryGetValue(sink, out var s)) return Interlocked.Read(ref s.Dropped);
+            var r = Row(sink);
+            return r != null ? Interlocked.Read(ref r.Dropped) : 0;
+        }
 
         public long TotalDropped()
         {
             long n = 0;
             foreach (var s in _sinks.Values) n += Interlocked.Read(ref s.Dropped);
+            for (int i = 0; i < _rows.Count; i++) n += Interlocked.Read(ref _rows[i].Dropped);
             return n;
+        }
+
+        private RowSink Row(string name)
+        {
+            for (int i = 0; i < _rows.Count; i++) if (_rows[i].Name == name) return _rows[i];
+            return null;
         }
 
         /// <summary>Encola una línea (sin '\n'). Hilo-seguro y sin bloqueo.</summary>
@@ -103,6 +138,27 @@ namespace HKTelemetry.Writing
             _wake.Set();
         }
 
+        private volatile Action _statusJob;
+        private int _statusSeenErrors;      // solo hilo de escritura
+        private long _statusSeenDropped;
+
+        /// <summary>
+        /// Como Job, pero además se recuerda como «trabajo de estado» (session.json): si cerrar o comprimir
+        /// los ficheros falla después del último, se vuelve a ejecutar para que los contadores finales
+        /// incluyan ese error.
+        /// </summary>
+        public void StatusJob(Action job)
+        {
+            Action wrapped = () =>
+            {
+                _statusSeenErrors = WriteErrors;
+                _statusSeenDropped = TotalDropped();
+                job();
+            };
+            _statusJob = wrapped;
+            Job(wrapped);
+        }
+
         /// <summary>
         /// Cierra la sesión: vuelca lo pendiente, cierra ficheros y (opcional) comprime.
         /// joinMs = 0 no bloquea al juego; en ApplicationQuit conviene esperar un poco.
@@ -117,6 +173,22 @@ namespace HKTelemetry.Writing
 
         private void Loop()
         {
+            foreach (var r in _rows)
+            {
+                try
+                {
+                    r.Writer = OpenFile(r.Path, r.Header);
+                    r.Writer.Flush();
+                    Interlocked.Exchange(ref r.Bytes, r.Writer.BaseStream.Length);
+                }
+                catch (Exception e)
+                {
+                    Fail(r.Name, e);
+                    CloseRow(r);
+                    r.PendingTruncate = 0; // una cabecera a medias no puede quedarse
+                    if (TruncateTo(r.Path, 0)) r.PendingTruncate = -1;
+                }
+            }
             while (!_stop)
             {
                 _wake.WaitOne(500);
@@ -125,11 +197,33 @@ namespace HKTelemetry.Writing
             }
             DrainAll();
             RunJobs();
+            // Lo que el último volcado no pudo escribir (fichero que no se pudo reabrir) ya no tendrá
+            // otra oportunidad: se cuenta como descartado, nunca se pierde en silencio.
+            int leftover = 0;
+            foreach (var s in _sinks.Values)
+            {
+                while (s.Queue.TryDequeue(out _))
+                {
+                    Interlocked.Decrement(ref s.QueueCount);
+                    Interlocked.Increment(ref s.Dropped);
+                    leftover++;
+                }
+            }
+            foreach (var r in _rows) leftover += r.DiscardPending();
+            if (leftover > 0) Fail("close", new IOException($"{leftover} líneas sin escribir al cerrar"));
             foreach (var s in _sinks.Values) CloseSink(s);
+            foreach (var r in _rows) CloseRow(r);
             if (_compressOnClose)
             {
                 try { CompressAll(Dir); }
                 catch (Exception e) { Fail("compress", e); }
+            }
+            // El último session.json pudo escribirse antes del volcado final (Stop llega un instante
+            // después de encolarlo): si desde entonces hay más errores o descartes, se reescribe.
+            if (_statusJob != null && (WriteErrors != _statusSeenErrors || TotalDropped() != _statusSeenDropped))
+            {
+                try { _statusJob(); }
+                catch (Exception e) { Fail("status", e); }
             }
             Finished = true;
         }
@@ -139,39 +233,108 @@ namespace HKTelemetry.Writing
             foreach (var s in _sinks.Values)
             {
                 if (Volatile.Read(ref s.QueueCount) == 0) continue;
+                // No se reabre sobre una línea a medias: primero el recorte pendiente (si sigue fallando,
+                // las líneas esperan en la cola).
+                if (s.PendingTruncate >= 0)
+                {
+                    if (!TruncateTo(s.Path, s.PendingTruncate)) continue;
+                    s.PendingTruncate = -1;
+                }
+                int batch = 0;
+                long good = Interlocked.Read(ref s.Bytes);
                 try
                 {
                     if (s.Writer == null) Open(s);
                     while (s.Queue.TryDequeue(out var line))
                     {
                         Interlocked.Decrement(ref s.QueueCount);
+                        batch++;
                         s.Writer.Write(line);
                         s.Writer.Write('\n');
-                        Interlocked.Increment(ref s.Lines);
                     }
                     s.Writer.Flush();
-                    Interlocked.Exchange(ref s.Bytes, s.Writer.BaseStream.Length);
+                    long len = s.Writer.BaseStream.Length;
+                    Interlocked.Add(ref s.Lines, batch);
+                    Interlocked.Exchange(ref s.Bytes, len);
                 }
                 catch (Exception e)
                 {
-                    // La línea en curso se pierde: se cuenta. El fichero se reabre en el siguiente ciclo.
-                    Interlocked.Increment(ref s.Dropped);
+                    // No se sabe qué parte del lote llegó al disco: se cuenta entero como descartado y el
+                    // fichero se recorta a la última longitud buena. Se reabre en el siguiente ciclo.
+                    // (Si falló al abrir, batch = 0: las líneas siguen en la cola y se reintentan.)
+                    Interlocked.Add(ref s.Dropped, batch);
                     Fail(System.IO.Path.GetFileName(s.Path), e);
                     CloseSink(s);
+                    if (!TruncateTo(s.Path, good)) s.PendingTruncate = good;
+                }
+            }
+
+            foreach (var r in _rows)
+            {
+                if (!r.HasRows) continue;
+                if (r.PendingTruncate >= 0)
+                {
+                    if (!TruncateTo(r.Path, r.PendingTruncate)) continue;
+                    r.PendingTruncate = -1;
+                }
+                int consumed = 0;
+                long good = Interlocked.Read(ref r.Bytes);
+                try
+                {
+                    if (r.Writer == null) r.Writer = OpenFile(r.Path, r.Header);
+                    r.WriteTo(r.Writer, _rowSb, ref consumed);
+                    r.Writer.Flush();
+                    long len = r.Writer.BaseStream.Length;
+                    Interlocked.Add(ref r.Lines, consumed);
+                    Interlocked.Exchange(ref r.Bytes, len);
+                }
+                catch (Exception e)
+                {
+                    // Igual que en eventos: el lote entero a descartados y el fichero sin filas a medias.
+                    Interlocked.Add(ref r.Dropped, consumed);
+                    Fail(r.Name, e);
+                    CloseRow(r);
+                    if (!TruncateTo(r.Path, good)) r.PendingTruncate = good;
                 }
             }
         }
 
-        private static void Open(Sink s)
+        /// <summary>Recorta el fichero a la última longitud escrita con éxito (quita filas a medias).</summary>
+        private bool TruncateTo(string path, long good)
         {
-            bool isNew = !File.Exists(s.Path) || new FileInfo(s.Path).Length == 0;
-            var fs = new FileStream(s.Path, FileMode.Append, FileAccess.Write, FileShare.Read, 65536);
-            s.Writer = new StreamWriter(fs, Utf8, 65536);
-            if (isNew && s.Header != null)
+            try
             {
-                s.Writer.Write(s.Header);
-                s.Writer.Write('\n');
+                if (!File.Exists(path)) return true;
+                using (var fs = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.Read))
+                    if (fs.Length > good) fs.SetLength(good);
+                return true;
             }
+            catch (Exception e)
+            {
+                Fail("truncate", e);
+                return false;
+            }
+        }
+
+        private static void CloseRow(RowSink r)
+        {
+            try { r.Writer?.Dispose(); } catch { /* ya estaba roto */ }
+            r.Writer = null;
+        }
+
+        private static void Open(Sink s) => s.Writer = OpenFile(s.Path, s.Header);
+
+        private static StreamWriter OpenFile(string path, string header)
+        {
+            bool isNew = !File.Exists(path) || new FileInfo(path).Length == 0;
+            var fs = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read, 65536);
+            var w = new StreamWriter(fs, Utf8, 65536);
+            if (isNew && header != null)
+            {
+                w.Write(header);
+                w.Write('\n');
+            }
+            return w;
         }
 
         private static void CloseSink(Sink s)

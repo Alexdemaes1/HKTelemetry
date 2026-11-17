@@ -49,7 +49,10 @@ namespace HKTelemetry
                     try { if (SessionManager.Active) Clock.Tick(gm); } catch (Exception e) { Safe.Report("poll.clock", e); }
                     try { SceneRecorder.Poll(gm); } catch (Exception e) { Safe.Report("poll.scene", e); }
                 }
-                try { CombatRecorder.Poll(HeroController.UnsafeInstance); } catch (Exception e) { Safe.Report("poll.combat", e); }
+                var hc = HeroController.UnsafeInstance;
+                try { InputRecorder.Poll(gm, hc); } catch (Exception e) { Safe.Report("poll.input", e); }
+                try { FrameRecorder.Poll(gm, hc); } catch (Exception e) { Safe.Report("poll.frame", e); }
+                try { CombatRecorder.Poll(hc); } catch (Exception e) { Safe.Report("poll.combat", e); }
                 try { MapRecorder.Poll(gm); } catch (Exception e) { Safe.Report("poll.map", e); }
                 try { PlayerDataRecorder.Poll(); } catch (Exception e) { Safe.Report("poll.pd", e); }
                 try { SessionManager.Tick(); } catch (Exception e) { Safe.Report("poll.session", e); }

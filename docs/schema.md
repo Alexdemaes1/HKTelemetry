@@ -1,4 +1,4 @@
-# HKTelemetry: esquema de datos (schema_version 2)
+# HKTelemetry: esquema de datos (schema_version 3)
 
 > Fuente de verdad del formato. Cualquier cambio incrementa `schema_version` y se anota en el
 > changelog del final. Cada campo indica **de dónde sale** en el juego. Las referencias
@@ -61,8 +61,8 @@ al arrancar el juego la siguiente vez.
   "end": { "utc": "…", "reason": "quit_menu|ending|menu|emergency_menu|permadeath|app_quit|restarted|recovered", "t_game": 0.0, "t_real": 0.0 },
   "progress_start": { /* sección 3.1 */ },
   "progress_end":   { /* sección 3.1 */ },
-  "counters": { "events": 0, "frames": 0, "inputs": 0, "dropped_frames": 0, "dropped_events": 0,
-                "write_errors": 0, "hook_errors": 0, "pd_suppressed": {} }
+  "counters": { "events": 0, "dropped_events": 0, "frames": 0, "dropped_frames": 0,
+                "inputs": 0, "dropped_inputs": 0, "write_errors": 0, "hook_errors": 0, "pd_suppressed": {} }
 }
 ```
 
@@ -259,33 +259,47 @@ El tiempo con el mapa abierto cuenta como tiempo de juego (`t_game`): el juego n
 
 | `type` | Payload `p` | Fuente |
 |---|---|---|
-| `device` | `from, to` | sondeo de `inputActions.LastInputType` (`KeyBindingSource`/`MouseBindingSource` = teclado, `DeviceBindingSource` = mando) |
+| `device` | `from` (null en el primero de la sesión), `to` (`none`/`kb`/`pad`/`unknown`), `gamepad` (`InputHandler.activeGamepadType`: `XBOX_ONE`, `PS4`, `SWITCH_PRO_CONTROLLER`…) | sondeo cada frame de `inputActions.LastInputType` (`KeyBindingSource`/`MouseBindingSource` = `kb`, `DeviceBindingSource` = `pad`, `None` = `none` hasta la primera pulsación). Siempre hay uno al empezar la sesión |
 | `perf` | `fps, dt_max_ms, mod_us_avg, mod_us_max, vsync, target_fps, dropped` | cada 1 s de tiempo real, desde el `Runner`. **v2:** `mod_us_*` = tiempo TOTAL del mod en el hilo del juego por frame (µs): hooks + sondeos + HUD (v1 solo medía el `Update` del Runner). Sirve para descartar que el mod cause tirones o input lag |
 | `writer` | `status` (`ok`/`error`/`dropping`), `msg` | hilo de escritura |
 
 ## 5. `frames.csv`
 
-Muestreo a `sample_hz` (60 por defecto) desde un `MonoBehaviour` propio con `DontDestroyOnLoad`
-y acumulador de `unscaledDeltaTime`. Como mucho una muestra por frame. Solo se muestrea si
-`HeroController.UnsafeInstance != null`; cuando no hay héroe se escribe una fila con `gap=1`.
+Muestreo a `sample_hz` (60 por defecto; se fija al empezar la sesión, así que un cambio en el menú se
+aplica en la siguiente, y `session.json` guarda la frecuencia usada) desde el `Runner` (`MonoBehaviour` propio con `DontDestroyOnLoad`,
+late también en pausa, menús y cinemáticas) con un acumulador de `unscaledDeltaTime`. Como mucho una
+muestra por frame; la primera, en el primer frame de la sesión. Si el juego va por debajo de `sample_hz`
+se muestrea cada frame, sin ráfagas para recuperar.
+
+Implementación (v3): el hilo del juego copia un struct a un búfer circular de 8192 filas sin asignar
+memoria; el texto se genera en el hilo de escritura, que se despierta antes si el búfer llega a la mitad.
+La cabecera se escribe al abrir la sesión, aunque luego no haya filas. Si una escritura a disco falla,
+el lote entero (como mucho 500 ms) cuenta como descartado y el fichero se recorta a la última longitud
+buena: nunca queda una fila a medias. Si el búfer se llena (disco atascado ~2 min), la
+fila se descarta y se cuenta en `counters.dropped_frames`; `seq` la cuenta igualmente, así que cada
+hueco en `seq` es una fila descartada.
+
+Cabecera exacta:
+`seq,t_game,t_real,frame,play_time,scene,gs,x,y,vx,vy,hp,hp_max,blue,soul,soul_reserve,hero_state,cstate,facing,accepting,time_scale,input_bitmask,move_x,move_y,gap`
 
 | Columna | Tipo | Fuente |
 |---|---|---|
-| `seq, t_game, t_real, frame` | | sección 2 |
-| `scene` | str | escena base |
-| `gs` | int | `gameState` (0 = INACTIVE, …, 4 = PLAYING, 5 = PAUSED…) |
+| `seq` | int | contador propio del fichero, desde 0 en cada sesión |
+| `t_game, t_real, frame, play_time` | | sección 2. `play_time` vacío si no hay `GameManager` |
+| `scene` | str | escena base actual (la misma de `events.jsonl`) |
+| `gs` | int | `gameState` (sección 8: 4 = PLAYING, 5 = PAUSED…). Vacío si no hay `GameManager` |
 | `x, y` | float | `hc.transform.position` |
-| `vx, vy` | float | `Rigidbody2D.velocity`. El componente se guarda en caché con `GetComponent` y se renueva cuando cambia la instancia (`rb2d` es privado) |
-| `hp, hp_max, blue` | int | `pd.health`, `pd.CurrentMaxHealth` (tiene en cuenta los *bindings* de Godhome), `pd.healthBlue` |
+| `vx, vy` | float | `Rigidbody2D.velocity` del héroe (velocidad física actual). El componente se guarda en caché con `GetComponent` y se renueva cuando cambia la instancia del héroe |
+| `hp, hp_max, blue` | int | `pd.health`; `pd.maxHealth` limitado por el *binding* de vida de Godhome (mismo cálculo que `CurrentMaxHealth`, sin pasar por `GetInt`); `pd.healthBlue` |
 | `soul, soul_reserve` | int | `pd.MPCharge`, `pd.MPReserve` |
-| `hero_state` | int | `hc.hero_state` (ActorStates: grounded, idle, running, airborne, wall_sliding, hard_landing, dash_landing, no_input, previous) |
+| `hero_state` | int | `hc.hero_state` (ActorStates: 0 grounded, 1 idle, 2 running, 3 airborne, 4 wall_sliding, 5 hard_landing, 6 dash_landing, 7 no_input, 8 previous) |
 | `cstate` | int64 | máscara de bits de los 55 bools de `cState`, en el orden de la sección 5.1 |
 | `facing` | int | 1 si `cState.facingRight`, −1 si no |
-| `accepting` | int | `hc.acceptingInput && !hc.controlReqlinquished && !gm.isPaused` |
-| `time_scale` | float | `Time.timeScale` (permite ver el *hit-stop*) |
-| `input_bitmask` | int | acciones pulsadas en algún momento desde la muestra anterior (OR acumulado cada frame) |
-| `move_x, move_y` | float | `inputActions.moveVector.X/Y` |
-| `gap` | int | 1 si no hay héroe (menú, cinemáticas) |
+| `accepting` | 0/1 | `hc.acceptingInput && !hc.controlReqlinquished && !gm.isPaused` |
+| `time_scale` | float | `Time.timeScale` (0 en el *hit-stop* y en pausa; ver sección 2) |
+| `input_bitmask` | int | acciones pulsadas en algún frame desde la muestra anterior (OR de cada frame; bits de la sección 6.1). Un botón mantenido aparece en todas las muestras |
+| `move_x, move_y` | float | `inputActions.moveVector.X/Y` en el frame de la muestra |
+| `gap` | 0/1 | 1 si no hay héroe (`HeroController.UnsafeInstance == null`): `x` … `accepting` van vacíos y el resto se rellena |
 
 Las columnas `hp`/`soul` se reconstruyen fácilmente a partir de `pd_change`, pero se mantienen
 porque son lo que más se usa en el análisis.
@@ -305,19 +319,32 @@ porque son lo que más se usa en el análisis.
 
 ## 6. `inputs.csv`
 
-Sondeo **cada frame** de `InputHandler.Instance.inputActions`. La referencia se vuelve a leer
-en cada frame, porque `InputHandler.Start` la recrea. Se emite una fila en cada transición de
-`IsPressed`; la detección de flanco es propia, sin depender de `WasPressed`, que dura un solo
-tick de InControl. Para el eje se emite una fila cuando `moveVector` cambia más de 0,2 en X o en Y.
+Sondeo **cada frame** (no a `sample_hz`) de `InputHandler.Instance.inputActions` desde el `Runner`, sin
+hooks. La referencia se vuelve a leer en cada frame, porque `InputHandler.Start` la recrea. Se emite una
+fila en cada transición de `IsPressed`; la detección de flanco es propia, sin depender de `WasPressed`,
+que dura un solo tick de InControl. Mismo búfer circular que `frames.csv` (contadores `inputs` y
+`dropped_inputs`; huecos en `seq` = filas descartadas).
+
+- Se graba durante toda la sesión, también en pausa, inventario y cinemáticas: la columna `accepting`
+  separa las pulsaciones que el héroe no podía usar.
+- Los botones que ya están pulsados al empezar la sesión salen como `down` en la primera fila (por
+  ejemplo, el botón con el que se cargó la partida): todos los `up` tienen su `down`.
+- El eje: una fila `action=move, ev=axis` cuando `moveVector` cambia más de 0,2 en X o en Y respecto a
+  la última fila de eje, y siempre que pasa de cero a no cero o al revés.
+- Las direcciones del stick también activan `left`/`right`/`up`/`down` (son acciones de InControl con
+  zona muerta propia).
+
+Cabecera exacta: `seq,t_game,t_real,frame,action,ev,x,y,device,accepting`
 
 | Columna | Definición |
 |---|---|
-| `seq, t_game, t_real, frame` | sección 2 |
-| `action` | nombre de la acción (sección 6.1) |
+| `seq` | contador propio del fichero, desde 0 en cada sesión |
+| `t_game, t_real, frame` | sección 2 (frame en el que el mod vio el cambio) |
+| `action` | nombre de la acción (sección 6.1) o `move` para el eje |
 | `ev` | `down`, `up` o `axis` |
-| `x, y` | solo en `axis` |
-| `device` | `kb` o `pad`, según `LastInputType` |
-| `accepting` | 1 si el héroe estaba aceptando input (para separar las pulsaciones que el juego ignoró) |
+| `x, y` | solo en `axis` (−1 … 1); vacíos en `down`/`up` |
+| `device` | `none`, `kb`, `pad` o `unknown`, según `LastInputType` en ese frame |
+| `accepting` | 1 si el héroe estaba aceptando input (mismo criterio que en `frames.csv`) |
 
 ### 6.1 Acciones y bits de `input_bitmask`
 
@@ -384,5 +411,6 @@ Se genera en el primer `scene_enter` de cada escena en la sesión, desde
 
 ## Changelog
 
+- **v3** (17/11/2026): `frames.csv` (§5) e `inputs.csv` (§6) implementados, con la cabecera exacta y búferes circulares sin asignaciones; evento `device` con `gamepad` y uno siempre al empezar; contadores `frames`/`dropped_frames`/`inputs`/`dropped_inputs`. Sin cambios en `events.jsonl` salvo `device`.
 - **v2** (17/11/2026): eventos de mapa (§4.7); `perf.mod_us_*` mide todo el tiempo del mod (hooks incluidos); `hit_dealt.hp_reset`; `death`/`hazard_respawn` llevan la fuente del golpe letal y se emiten después de su `hit_taken`; el `scene_exit` de «Guardar y salir» se emite al llegar a `Quit_To_Menu` (una salida cancelada ya no deja rastro); `env_break` solo cuando el objeto se rompe de verdad; motivo `new_game` para `Opening_Sequence → Tutorial_01`.
 - **v1** (16/11/2026): esquema inicial, verificado contra el código descompilado de la 1.5.78. Experiencia automática (§3.2) en lugar de autodeclarada; 60 Hz por defecto.

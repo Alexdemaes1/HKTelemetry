@@ -275,6 +275,9 @@ namespace HKTelemetry.Hud
             {
                 sb.Append("events.jsonl: "); Json.AppendNumber(sb, Math.Round(w.Bytes(TelemetryWriter.Events) / 1024.0, 1));
                 sb.Append(" KB  líneas "); Json.AppendLong(sb, w.Lines(TelemetryWriter.Events)); sb.Append(NL);
+                sb.Append("frames: "); Json.AppendLong(sb, w.Lines(TelemetryWriter.Frames));
+                sb.Append(" ("); Json.AppendNumber(sb, Math.Round(Recorders.FrameRecorder.MeasuredHz, 1)); sb.Append(" Hz)");
+                sb.Append("  inputs: "); Json.AppendLong(sb, w.Lines(TelemetryWriter.Inputs)); sb.Append(NL);
                 sb.Append("descartados: "); Json.AppendLong(sb, w.TotalDropped());
                 sb.Append("  errores escritura: "); Json.AppendLong(sb, w.WriteErrors); sb.Append(NL);
             }

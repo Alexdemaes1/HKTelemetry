@@ -31,6 +31,8 @@ namespace HKTelemetry.Session
             public int Slot;
             public DateTime StartUtc;
             public TelemetryWriter Writer;
+            public RowRing<Recorders.FrameRow> Frames;
+            public RowRing<Recorders.InputRow> Inputs;
             public long Seq;
             public Experience Experience;
             public Dictionary<string, object> Game, Display, ProgressStart, ProgressEnd;
@@ -49,6 +51,8 @@ namespace HKTelemetry.Session
         public static string SessionId => _s?.Id;
         public static string Kind => _s?.Kind;
         public static TelemetryWriter Writer => _s?.Writer;
+        public static RowRing<Recorders.FrameRow> FrameSink => _s?.Frames;
+        public static RowRing<Recorders.InputRow> InputSink => _s?.Inputs;
         /// <summary>Tipo del último evento emitido (overlay de debug).</summary>
         public static volatile string LastType;
 
@@ -80,6 +84,9 @@ namespace HKTelemetry.Session
             string pid = HKTelemetry.Settings.PlayerId ?? "P00";
             foreach (char c in Path.GetInvalidFileNameChars()) pid = pid.Replace(c, '_');
             string dir = Path.Combine(Root, $"{DateTime.UtcNow:yyyyMMdd_HHmmss}_{pid}_{id.Substring(0, 8)}");
+            // Búferes nuevos por sesión: el escritor de la sesión anterior puede seguir vaciando los suyos.
+            var frames = Recorders.FrameRecorder.CreateSink();
+            var inputs = Recorders.InputRecorder.CreateSink();
             var s = new State
             {
                 Id = id,
@@ -91,7 +98,9 @@ namespace HKTelemetry.Session
                 Writer = new TelemetryWriter(dir, new[]
                 {
                     (TelemetryWriter.Events, (string)null, 500_000),
-                }),
+                }, new RowSink[] { frames, inputs }),
+                Frames = frames,
+                Inputs = inputs,
             };
             _s = s;
 
@@ -105,6 +114,8 @@ namespace HKTelemetry.Session
             CombatRecorder.OnSessionStart();
             PlayerDataRecorder.OnSessionStart();
             MapRecorder.OnSessionStart();
+            InputRecorder.OnSessionStart();
+            FrameRecorder.OnSessionStart();
             Emit("session_start", Json.Obj().S("kind", kind).I("slot", slot).S("launch_id", LaunchId).End());
             WriteSessionJson();
 
@@ -239,7 +250,7 @@ namespace HKTelemetry.Session
                     ["display"] = s.Display,
                     ["settings"] = new Dictionary<string, object>
                     {
-                        ["sample_hz"] = HKTelemetry.Settings.SampleHz,
+                        ["sample_hz"] = FrameRecorder.EffectiveHz, // fijada al empezar la sesión
                         ["hide_hud"] = HKTelemetry.Settings.HideHud,
                         ["debug"] = HKTelemetry.Settings.Debug,
                     },
@@ -258,17 +269,30 @@ namespace HKTelemetry.Session
                     ["counters"] = new Dictionary<string, object>
                     {
                         ["events"] = Interlocked.Read(ref s.Seq),
-                        ["dropped_events"] = w.Dropped(TelemetryWriter.Events),
-                        ["write_errors"] = w.WriteErrors,
+                        // dropped_*, frames, inputs y write_errors se rellenan en el hilo de escritura (abajo).
                         ["hook_errors"] = Safe.ErrorCount - s.HookErrorsAtStart,
                     },
                 };
                 var counters = (Dictionary<string, object>)doc["counters"];
                 foreach (var kv in PlayerDataRecorder.Counters()) counters[kv.Key] = kv.Value;
                 string path = Path.Combine(s.Dir, "session.json");
+                long framesProduced = FrameRecorder.Produced, inputsProduced = InputRecorder.Produced;
                 // La serialización (decenas de KB de basura) va al hilo de escritura: el diccionario
-                // solo contiene copias, nadie lo modifica después.
-                w.Job(() => TelemetryWriter.WriteAtomic(path, JsonConvert.SerializeObject(doc, Formatting.Indented)));
+                // solo contiene copias y a partir de aquí solo lo toca ese hilo. Los contadores de
+                // pérdidas se leen allí, en el momento de escribir. Si después del último session.json hay
+                // más errores o descartes (volcado final, cierre, compresión), el escritor lo reescribe
+                // (TelemetryWriter.StatusJob).
+                w.StatusJob(() =>
+                {
+                    counters["dropped_events"] = w.Dropped(TelemetryWriter.Events);
+                    counters["dropped_frames"] = w.Dropped(TelemetryWriter.Frames);
+                    counters["dropped_inputs"] = w.Dropped(TelemetryWriter.Inputs);
+                    // Filas que no se perdieron (seq las numera todas: cada hueco es una descartada).
+                    counters["frames"] = framesProduced - w.Dropped(TelemetryWriter.Frames);
+                    counters["inputs"] = inputsProduced - w.Dropped(TelemetryWriter.Inputs);
+                    counters["write_errors"] = w.WriteErrors;
+                    TelemetryWriter.WriteAtomic(path, JsonConvert.SerializeObject(doc, Formatting.Indented));
+                });
             });
         }
 
