@@ -23,3 +23,6 @@ __pycache__/
 dist/
 HKTelemetry/Output/
 HKTelemetry/Version.txt
+
+# El kit publicado (lo adjunta a la release el workflow .github/workflows/release.yml)
+!release/HKTelemetry.zip

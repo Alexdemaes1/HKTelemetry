@@ -47,7 +47,7 @@ namespace HKTelemetry.Hud
         private float _lastEventsTime;
         private float _eventsPerSec;
         private float _nextDebug;
-        private string _titleLine, _titlePid, _titleUpload;
+        private string _titleLine, _titlePid, _titleUpload, _titleNewer;
         private string _sessionId, _sessionShort;
         private int _errCode = -1;          // qué error hay mostrado (para no rehacer el mensaje)
         private long _errValue = -1;
@@ -195,13 +195,16 @@ namespace HKTelemetry.Hud
                 // StatusText devuelve strings constantes salvo con sesiones pendientes: comparar el valor.
                 string upload = Session.Uploader.StatusText();
                 string who = Session.Identity.DisplayName;
-                if (_titleLine == null || !ReferenceEquals(_titlePid, who) || upload != _titleUpload)
+                string newer = Session.UpdateCheck.NewerVersion;
+                if (_titleLine == null || !ReferenceEquals(_titlePid, who) || upload != _titleUpload || !ReferenceEquals(newer, _titleNewer))
                 {
                     _titlePid = who;
                     _titleUpload = upload;
+                    _titleNewer = newer;
                     _titleLine = $"HKTelemetry v{HKTelemetry.VersionString}  -  grabando como {who}  -  " +
                                  $"juego 1.5.78 {(Unsupported ? "NO SOPORTADO" : "OK")}" +
-                                 (upload != null ? "  -  " + upload : "");
+                                 (upload != null ? "  -  " + upload : "") +
+                                 (newer != null ? "\n" + $"Versión nueva del mod ({newer}): descárgala en {Session.UpdateCheck.DownloadUrl} y vuelve a instalar" : "");
                     _title.text = _titleLine;
                 }
             }
