@@ -34,7 +34,7 @@ Verificación de la API contra el código, con referencias `archivo:línea`: [ap
 | 4 (`frames.csv`) y 5 (`inputs.csv`) | ✅ probadas el 17/11 (sesión `20261117_185043`): 59,8 Hz reales, huecos solo en cargas de sala, 4512 inputs de mando XBOX_ONE, mod a ~46 µs/frame, sin input lag |
 | 8 (kit) | ✅ probado el 17/11 en el juego con el kit P99 (sesión `20261117_195746`: instalar con API previa, jugar, exportar; 0 errores). Probado fuera del juego: 6 escenarios de instalar/desinstalar (`tools/test_kit.ps1`) |
 | Envío automático | ✅ probado en el juego el 22/11 con el kit final: las 6 sesiones locales subidas a Drive desde el menú en 50 s (conexión segura desde el Mono de Unity OK) |
-| Kit único + identidad Steam | ✅ release v1.0.0 publicada el 22/11 (workflow `release.yml`). Identidad leída dentro del juego: `player_id=S875967793 (steam_active_user)`. **Pendiente de Alex:** publicar la versión nueva de `server/Code.gs` (hasta entonces el receptor rechaza los ids `S…`; las sesiones esperan en los PCs y se reenvían solas) |
+| Kit único + identidad Steam | ✅ release v1.0.0 publicada el 22/11 (workflow `release.yml`). Identidad leída dentro del juego: `player_id=S875967793 (steam_active_user)`. Receptor actualizado el 22/11 (acepta ids `S…`; probado con una subida real) |
 | Aviso de versión nueva | ✅ `Session/UpdateCheck.cs`: el menú principal avisa si hay una release más nueva |
 | 6 (catálogo de salas) | ⏳ pasa a la v1.1 (ver «Estado de la entrega») |
 
