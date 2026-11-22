@@ -22,6 +22,7 @@ mapa, rendimiento…) para crear un dataset de un máster de IA. No cambia la ju
 | [docs/api-notes/](docs/api-notes/) | Verificación de la API del juego, con referencias al código |
 | [CLAUDE.md](CLAUDE.md) | Reglas del proyecto y trampas conocidas |
 | [JUGADORES.md](JUGADORES.md) | **Instrucciones para los participantes** (descargar, instalar, jugar) |
+| [docs/estado-proyecto.md](docs/estado-proyecto.md) | Estado del mod y qué datos llegan (para el equipo del ML Challenge) |
 | [kit/LEEME.txt](kit/LEEME.txt) | Guía que reciben los participantes |
 
 ## Compilar y validar
@@ -63,16 +64,18 @@ Para validar lo recibido: descomprimir y `python tools/validate.py <carpeta_de_s
 ### Publicar una versión para los jugadores
 
 El enlace de [JUGADORES.md](JUGADORES.md) apunta a
-`https://github.com/Alexdemaes1/HKTelemetry/releases/latest/download/HKTelemetry.zip`, así que siempre
-descarga la última release que tenga un fichero llamado exactamente `HKTelemetry.zip`:
+`https://github.com/Alexdemaes1/HKTelemetry/releases/latest/download/HKTelemetry.zip`, la última release.
+La crea sola el workflow [.github/workflows/release.yml](.github/workflows/release.yml) al subir una etiqueta:
 
-1. Genera el kit: `python tools/make_kit.py --upload-url <dirección /exec del receptor>` → `dist/HKTelemetry.zip`.
-2. En GitHub: **Releases → Draft a new release** → *Choose a tag*: escribe la versión (p. ej. `v1.0.0`)
-   → *Create new tag* → título `HKTelemetry 1.0.0`.
-3. Arrastra `dist/HKTelemetry.zip` a la zona de ficheros adjuntos (sin cambiarle el nombre).
-4. **Publish release**. El enlace de descarga funciona al momento.
+1. Sube la versión en `HKTelemetry/HKTelemetry.csproj` (`AssemblyVersion`, p. ej. `1.1.0.0`).
+2. `python tools/make_kit.py --upload-url <dirección /exec del receptor>` y copia `dist/HKTelemetry.zip`
+   a `release/HKTelemetry.zip`.
+3. Commit, `git tag v1.1.0` y `git push origin main v1.1.0`. El workflow comprueba que la versión del zip
+   coincide con la etiqueta y publica la release; el enlace pasa a la nueva al momento.
 
-Para una versión nueva, repite con otro número (`v1.0.1`…): el enlace pasa a la nueva sola. Ojo: el zip
+Quien ya lo tiene instalado ve en el menú principal del juego «Versión nueva del mod (1.1.0)…»
+(`Session/UpdateCheck.cs` consulta la última release una vez por arranque) y solo tiene que descargar e
+instalar otra vez. Ojo: el zip
 lleva la dirección del receptor, y una release pública la deja visible para cualquiera. Está preparado
 para eso (solo admite subidas con el formato del mod y tiene topes de espacio, ver
 [docs/upload-setup.md](docs/upload-setup.md)).

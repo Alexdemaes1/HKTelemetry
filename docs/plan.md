@@ -33,20 +33,21 @@ Verificación de la API contra el código, con referencias `archivo:línea`: [ap
 | 7 (HUD) | ✅ probado el 17/11: punto verde/gris, línea de título y overlay de debug |
 | 4 (`frames.csv`) y 5 (`inputs.csv`) | ✅ probadas el 17/11 (sesión `20261117_185043`): 59,8 Hz reales, huecos solo en cargas de sala, 4512 inputs de mando XBOX_ONE, mod a ~46 µs/frame, sin input lag |
 | 8 (kit) | ✅ probado el 17/11 en el juego con el kit P99 (sesión `20261117_195746`: instalar con API previa, jugar, exportar; 0 errores). Probado fuera del juego: 6 escenarios de instalar/desinstalar (`tools/test_kit.ps1`) |
-| Envío automático | 🟡 receptor desplegado en la cuenta del proyecto y probado desde el PC (subida real, duplicados, validación). Falta probarlo jugando |
-| Kit único + identidad Steam | 🟡 un solo `dist/HKTelemetry.zip`; el jugador se identifica por su cuenta de Steam (`Identity.cs`, probado leyendo el Steam real). Falta actualizar el receptor (nueva versión de `Code.gs`) y probarlo jugando |
-| 6 | ⏳ pendiente |
+| Envío automático | ✅ probado en el juego el 22/11 con el kit final: las 6 sesiones locales subidas a Drive desde el menú en 50 s (conexión segura desde el Mono de Unity OK) |
+| Kit único + identidad Steam | ✅ release v1.0.0 publicada el 22/11 (workflow `release.yml`). Identidad leída dentro del juego: `player_id=S875967793 (steam_active_user)`. **Pendiente de Alex:** publicar la versión nueva de `server/Code.gs` (hasta entonces el receptor rechaza los ids `S…`; las sesiones esperan en los PCs y se reenvían solas) |
+| Aviso de versión nueva | ✅ `Session/UpdateCheck.cs`: el menú principal avisa si hay una release más nueva |
+| 6 (catálogo de salas) | ⏳ pasa a la v1.1 (ver «Estado de la entrega») |
 
 **Rendimiento (sesión `20261117_175815`, con debug activado):** el mod cuesta ~63 µs/frame de media jugando (~1 % de un frame a 180 fps). Los picos de **3,06 ms** que salen cada ~15 s (o múltiplos) son el **recolector de basura incremental de Unity**: `boot.config` del juego tiene `gc-max-time-slice=3`, la duración es siempre la misma y caen también en segundos sin ningún evento. Es la recolección del juego entero que a veces arranca dentro de una asignación del mod; el frame dura ~6 ms en vez de 5,6, sin perder frames. Los dos picos grandes (24 ms y 14 ms) son de una sola vez, en la carga de partida (compilación JIT del mod y volcado de FSM, que ahora solo se hace en modo debug).
 
-**Abierto:** input lag percibido. Las medidas no lo explican; falta la prueba A/B (un rato con el mod desactivado en la misma zona).
+**Input lag:** cerrado. Las medidas no lo explican y en las pruebas de juego del 17–22/11 no se percibe.
 
-### Lo que falta para entregar el mod
+### Estado de la entrega (22/11/2026)
 
-1. **Fase 8, kit para participantes** (imprescindible): instalador y desinstalador `.bat` (API + mod, con copia de seguridad), un único kit para todos (identidad automática por Steam), `.bat` para enviar los datos en un zip, guía de una página (cambio a la versión anterior en Steam) y aviso de qué se recoge.
-2. **Fase 6, catálogo de salas** (recomendada antes de entregar, porque no se puede reconstruir después): enemigos, objetos rompibles y tamaño de cada sala la primera vez que se entra.
-3. **Versión 1.0.0** en Release y prueba completa del kit en limpio (desinstalar, instalar con el kit, jugar, enviar datos).
-4. Después de entregar: `to_parquet.py` para el análisis y revisar en los primeros datos los puntos pendientes de schema.md §9.
+- Kit v1.0.0 publicado como release; el enlace ya se repartió a los participantes. Sin piloto previo (decisión de Alex).
+- **Fase 6 (catálogo de salas):** no entra en la v1.0.0. Lo esencial para el clustering ya está en los eventos: `enemy_spawn` (todos los enemigos presentes al entrar, incluidos los ya muertos), `env_break`, salidas reales en `scene_exit` y tamaño aproximado por el recorrido de `frames.csv`. El catálogo completo (`scenes/<escena>.json`, schema §7) irá en una v1.1: es casi igual para todos los jugadores, así que basta con que lo graben los miembros del equipo; el resto ve el aviso de versión nueva en el menú.
+- Pruebas T1–T9 (schema §9): se cerrarán revisando los primeros datos recibidos.
+- Siguiente: `to_parquet.py` y la construcción de tablas (`visits`, `rooms`, `players`) en el repo del challenge.
 
 ### Perfilado de jugadores (agresivo / pasivo / explorador…)
 
