@@ -1,0 +1,57 @@
+HKTelemetry en Steam Deck y Mac
+===============================
+
+Los .bat son solo para Windows. En Steam Deck (o Linux) y en Mac se usa la
+carpeta SteamDeck_Mac, que hace lo mismo: instalar, enviar datos y desinstalar.
+
+ANTES DE EMPEZAR
+----------------
+Cambia Hollow Knight a la versión 1.5.78 (el mod solo funciona con esa):
+Steam > Biblioteca > Hollow Knight > Propiedades (rueda dentada en la Steam Deck) >
+"Versiones de juego y betas" > "1.5.78.11833". Espera a que termine de descargarse.
+
+
+STEAM DECK
+----------
+1. Pasa al modo Escritorio: botón Steam > Apagar > Cambiar al escritorio.
+2. Abre "Konsole" (menú de aplicaciones, abajo a la izquierda > Sistema > Konsole).
+   Para escribir: botón Steam + X abre el teclado en pantalla.
+3. Escribe esta línea y pulsa Enter:
+
+   curl -fsSL https://github.com/Alexdemaes1/HKTelemetry/releases/latest/download/instalar.sh | bash
+
+   Descarga el kit en la carpeta HKTelemetry de tu usuario y lo instala. Lee el aviso
+   y escribe S para aceptar.
+4. Vuelve al modo Juego (icono "Volver al modo de juego" del escritorio) y juega
+   normal. Funciona igual con la versión de Linux o con Proton.
+
+Si ya tienes este zip descomprimido: en el explorador (Dolphin), clic derecho en la
+carpeta SteamDeck_Mac > "Abrir terminal aquí" y escribe:  bash hktelemetry.sh instalar
+
+
+MAC
+---
+Opción 1 (la más sencilla): abre "Terminal" (Aplicaciones > Utilidades), pega esta
+línea y pulsa Enter:
+
+   curl -fsSL https://github.com/Alexdemaes1/HKTelemetry/releases/latest/download/instalar.sh | bash
+
+Opción 2: con este zip descomprimido, abre la carpeta SteamDeck_Mac y haz doble clic
+en 1_INSTALAR.command. Si macOS dice que no puede abrirlo porque es de un
+desarrollador no identificado: clic derecho > Abrir > Abrir.
+
+
+ENVIAR LOS DATOS
+----------------
+{UPLOAD_SECTION_UNIX}
+
+
+DESINSTALAR
+-----------
+Steam Deck: en Konsole,   bash ~/HKTelemetry/SteamDeck_Mac/hktelemetry.sh desinstalar
+Mac: doble clic en 3_DESINSTALAR.command (o la misma línea en Terminal).
+Para volver a la última versión del juego: Steam > Propiedades >
+"Versiones de juego y betas" > "Ninguna".
+
+
+Qué datos se recogen y el resto de dudas: LEEME.txt (es igual para todos).

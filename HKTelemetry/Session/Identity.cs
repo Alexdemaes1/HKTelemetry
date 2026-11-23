@@ -144,13 +144,14 @@ namespace HKTelemetry.Session
                 }
             }
             catch { }
-            try
+            // Linux, Steam Deck, Proton y Mac (sin registro): subir desde el juego o rutas por defecto.
+            string dataPath = null;
+            try { dataPath = GameDataPath(); } catch { }
+            foreach (string c in SteamPaths.Candidates(dataPath))
             {
-                // <Steam>/steamapps/common/Hollow Knight/hollow_knight_Data
-                var steamapps = new DirectoryInfo(GameDataPath()).Parent?.Parent?.Parent;
-                if (steamapps != null && steamapps.Name.Equals("steamapps", StringComparison.OrdinalIgnoreCase)) return steamapps.Parent.FullName;
+                try { if (File.Exists(Path.Combine(Path.Combine(c, "config"), "loginusers.vdf"))) return c; }
+                catch { }
             }
-            catch { }
             return null;
         }
 

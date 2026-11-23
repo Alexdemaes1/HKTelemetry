@@ -43,6 +43,13 @@ API_ZIP_NAME = "moddingapi.v77.windows.zip"
 API_ZIP_SHA256 = "bc9f0db3d0916b05cd5a2420bb602fb1b239ce3ff6c289fd84bffb682fb8f1d6"
 API_SKIP = {"README.md"}  # documentación del zip: no va a Managed
 
+# Steam Deck / Linux y Mac (kit/unix/hktelemetry.sh): zips oficiales de la misma release, fijados por hash.
+UNIX_APIS = {
+    "linux": ("moddingapi.v77.linux.zip", "5d2327d76b2c48e2694e43e90689d867eaa9ac1d9e6fd2998c93087de7b61ddb"),
+    "macos": ("moddingapi.v77.macos.zip", "6f636af4d831d8892aea984c74d154d558fb23cc0c5b768ab6d7ce4655afac25"),
+}
+API_BASE = API_URL.rsplit("/", 1)[0]
+
 # Huellas fijas: si cambian, el kit no se genera.
 # - Assembly-CSharp.dll original de la 1.5.78.11833 de Steam (reference/vanilla-managed-backup/).
 VANILLA_AC_SHA256 = "fcc01e0df1b841a8faf6b5e39f27030f63204ad02f430b3defa262134ae4e8a0"
@@ -82,19 +89,40 @@ def parse_players(args: list[str]) -> list[str]:
     return out
 
 
-def get_api_zip(path: Path | None) -> bytes:
+def get_api_zip(path: Path | None, name: str = API_ZIP_NAME, expected: str = API_ZIP_SHA256) -> bytes:
     if path is None:
-        path = CACHE / API_ZIP_NAME
+        path = CACHE / name
         if not path.exists():
             CACHE.mkdir(parents=True, exist_ok=True)
-            print(f"Descargando la Modding API v77 de {API_URL} ...")
-            with urllib.request.urlopen(API_URL, timeout=120) as r:
+            url = f"{API_BASE}/{name}"
+            print(f"Descargando la Modding API v77 de {url} ...")
+            with urllib.request.urlopen(url, timeout=120) as r:
                 data = r.read()
             path.write_bytes(data)
     data = path.read_bytes()
-    if sha256(data) != API_ZIP_SHA256:
+    if sha256(data) != expected:
         sys.exit(f"{path} no es el zip oficial de la Modding API v77 (sha256 distinto). Bórralo y vuelve a ejecutar.")
     return data
+
+
+def unix_api_files(data: bytes) -> dict[str, bytes]:
+    """API de Linux o Mac: lo mismo que Lumafly copia a Managed, sin la documentación (.xml, README)."""
+    files: dict[str, bytes] = {}
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        for info in z.infolist():
+            name = info.filename
+            if info.is_dir() or name in API_SKIP or name.endswith(".xml"):
+                continue
+            if "/" in name or "\\" in name:
+                sys.exit(f"El zip de la API tiene subcarpetas inesperadas ({name}); revisar make_kit.py")
+            files[name] = z.read(info)
+    if "Assembly-CSharp.dll" not in files:
+        sys.exit("El zip de la API no trae Assembly-CSharp.dll")
+    return files
+
+
+def sums(files: dict[str, bytes]) -> bytes:
+    return "".join(f"{sha256(b)}  {n}\n" for n, b in sorted(files.items())).encode()
 
 
 def api_files_from_zip(data: bytes) -> dict[str, bytes]:
@@ -154,6 +182,16 @@ UPLOAD_MANUAL = """1. Cierra Hollow Knight.
 Puedes enviarlos cuando quieras y las veces que quieras; se envía todo lo
 grabado hasta ese momento."""
 
+UPLOAD_UNIX_AUTO = """Normalmente nada: al hacer "Guardar y salir", el mod envía la sesión por internet
+desde el menú principal (igual que en Windows).
+
+Si te lo pide Alex, o el envío automático no funciona:
+"""
+
+UPLOAD_UNIX_MANUAL = """Cierra Hollow Knight y ejecuta  bash hktelemetry.sh enviar  (en Mac, doble clic en
+2_ENVIAR_DATOS.command). Deja un fichero HKTelemetry_datos_fecha en tu Escritorio
+(o en tu carpeta de usuario): envíaselo a Alex como te venga mejor."""
+
 PRIVACY_AUTO = """Al terminar cada partida, la sesión se envía por internet a una carpeta de
 Google Drive del proyecto a la que solo tiene acceso Alex, y solo se usará para
 el trabajo de máster."""
@@ -167,6 +205,7 @@ def kit_text(path: Path, player: str, auto_upload: bool) -> bytes:
     text = path.read_text(encoding="utf-8-sig")
     text = text.replace("{UPLOAD_SECTION}", UPLOAD_AUTO if auto_upload else UPLOAD_MANUAL)
     text = text.replace("{PRIVACY_SENTENCE}", PRIVACY_AUTO if auto_upload else PRIVACY_MANUAL)
+    text = text.replace("{UPLOAD_SECTION_UNIX}", (UPLOAD_UNIX_AUTO if auto_upload else "") + UPLOAD_UNIX_MANUAL)
     text = text.replace("{PLAYER_ID}", player)
     text = text.replace("\r\n", "\n").replace("\n", "\r\n")
     if path.suffix == ".bat":
@@ -174,7 +213,21 @@ def kit_text(path: Path, player: str, auto_upload: bool) -> bytes:
     return b"\xef\xbb\xbf" + text.encode("utf-8")
 
 
-def make_kit(player: str, api: dict[str, bytes], dll: bytes, version: str, api_zip_sha: str, upload_url: str) -> Path:
+def unix_text(path: Path) -> bytes:
+    """Scripts de Steam Deck / Mac: UTF-8 sin BOM y saltos LF (bash no admite CRLF)."""
+    return path.read_bytes().decode("utf-8-sig").replace("\r\n", "\n").encode("utf-8")
+
+def write_exec(z: zipfile.ZipFile, arcname: str, data: bytes) -> None:
+    """Fichero con permiso de ejecución al descomprimir en Linux/Mac."""
+    info = zipfile.ZipInfo(arcname, date_time=(2026, 1, 1, 0, 0, 0))
+    info.create_system = 3  # Unix: respeta external_attr
+    info.external_attr = (0o100755 << 16)
+    info.compress_type = zipfile.ZIP_DEFLATED
+    z.writestr(info, data)
+
+
+def make_kit(player: str, api: dict[str, bytes], dll: bytes, version: str, api_zip_sha: str, upload_url: str,
+             unix_apis: dict[str, dict[str, bytes]]) -> Path:
     top = "HKTelemetry" if player == "auto" else f"HKTelemetry_{player}"
     settings = json.dumps({"PlayerId": player, "SampleHz": 60, "HideHud": False, "Debug": False,
                            "UploadUrl": upload_url, "AutoUpload": True}, indent=2).encode()
@@ -213,6 +266,28 @@ def make_kit(player: str, api: dict[str, bytes], dll: bytes, version: str, api_z
         z.writestr(f"{top}/files/api/LICENSE_ModdingAPI.txt", license_bytes)
         z.writestr(f"{top}/files/mod/HKTelemetry.dll", dll)
         z.writestr(f"{top}/files/mod/HKTelemetry.GlobalSettings.json", settings)
+
+        # ---- Steam Deck / Linux y Mac ----
+        mod_files = {"HKTelemetry.dll": dll, "HKTelemetry.GlobalSettings.json": settings}
+        z.writestr(f"{top}/files/mod/SHA256SUMS", sums(mod_files))
+        z.writestr(f"{top}/files/api/SHA256SUMS", sums(api))
+        for plat, files in sorted(unix_apis.items()):
+            for n, b in sorted(files.items()):
+                z.writestr(f"{top}/files/api_{plat}/{n}", b)
+            z.writestr(f"{top}/files/api_{plat}/SHA256SUMS", sums(files))
+        conf = "\n".join([
+            "# Generado por tools/make_kit.py: lo lee SteamDeck_Mac/hktelemetry.sh",
+            f"MOD_VERSION={version}",
+            f"UNITY_PREFIX={UNITY_PREFIX}",
+            f"WINDOWS_VANILLA_AC={VANILLA_AC_SHA256}",
+            f"WINDOWS_API_AC={API_AC_SHA256}",
+            *[f"{p.upper()}_API_AC={sha256(f['Assembly-CSharp.dll'])}" for p, f in sorted(unix_apis.items())],
+        ]) + "\n"
+        z.writestr(f"{top}/files/unix.conf", conf)
+        unix_src = KIT_SRC / "unix"
+        z.writestr(f"{top}/LEEME_SteamDeck_Mac.txt", kit_text(KIT_SRC / "LEEME_SteamDeck_Mac.txt", player, bool(upload_url)))
+        for sh in sorted(unix_src.glob("*.command")) + [unix_src / "hktelemetry.sh"]:
+            write_exec(z, f"{top}/SteamDeck_Mac/{sh.name}", unix_text(sh))
     return out
 
 
@@ -236,11 +311,12 @@ def main() -> int:
             print(f"AVISO: el receptor (server/Code.gs, ALLOWED_PLAYER) solo acepta Steam, instalación o P00-P99; rechazaría {odd}")
     api_zip = get_api_zip(args.api_zip)
     api = api_files_from_zip(api_zip)
+    unix_apis = {p: unix_api_files(get_api_zip(None, name, h)) for p, (name, h) in UNIX_APIS.items()}
     dll = build_mod(args.no_build)
     version = mod_version()
     print(f"Mod {version} | API v77: {len(api)} ficheros | zip API sha256 {sha256(api_zip)[:16]}...")
     for p in players:
-        out = make_kit(p, api, dll, version, sha256(api_zip), args.upload_url)
+        out = make_kit(p, api, dll, version, sha256(api_zip), args.upload_url, unix_apis)
         print(f"  {out.relative_to(ROOT)}  ({out.stat().st_size / 1e6:.1f} MB)")
     return 0
 

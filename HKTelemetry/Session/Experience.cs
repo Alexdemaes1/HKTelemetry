@@ -141,6 +141,8 @@ namespace HKTelemetry.Session
                 }
             }
             catch { /* sin registro (Linux/Proton) o sin permiso */ }
+            // Sin registro (Linux, Steam Deck, Mac): la cuenta que ya identificó Identity (loginusers.vdf).
+            if (active == 0) active = Identity.SteamAccountId;
 
             int? best = null, mine = null;
             int accounts = 0;
@@ -161,29 +163,15 @@ namespace HKTelemetry.Session
         }
 
         /// <summary>
-        /// Raíz de Steam: el juego está en &lt;Steam&gt;/steamapps/common/Hollow Knight/hollow_knight_Data.
-        /// Si el juego está en otra biblioteca, se prueba la ruta por defecto de Steam.
+        /// Raíz de Steam (la que tiene userdata/): subiendo desde la carpeta del juego hasta steamapps o,
+        /// si el juego está en otra biblioteca, las rutas por defecto de Windows, Linux/Steam Deck y Mac.
         /// </summary>
         private static string FindSteamRoot(string dataPath)
         {
-            try
+            foreach (string candidate in SteamPaths.Candidates(dataPath))
             {
-                var dir = new DirectoryInfo(dataPath); // .../hollow_knight_Data
-                var steamapps = dir.Parent?.Parent?.Parent; // .../steamapps
-                if (steamapps != null && steamapps.Name.Equals("steamapps", StringComparison.OrdinalIgnoreCase))
-                {
-                    string candidate = steamapps.Parent.FullName;
-                    if (Directory.Exists(Path.Combine(candidate, "userdata"))) return candidate;
-                }
-            }
-            catch { /* ruta rara: probar la de por defecto */ }
-
-            foreach (var env in new[] { "ProgramFiles(x86)", "ProgramFiles" })
-            {
-                string pf = Environment.GetEnvironmentVariable(env);
-                if (string.IsNullOrEmpty(pf)) continue;
-                string candidate = Path.Combine(pf, "Steam");
-                if (Directory.Exists(Path.Combine(candidate, "userdata"))) return candidate;
+                try { if (Directory.Exists(Path.Combine(candidate, "userdata"))) return candidate; }
+                catch { }
             }
             return null;
         }

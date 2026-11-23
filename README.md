@@ -61,6 +61,17 @@ Con `--upload-url` el mod envía cada sesión solo a una carpeta de Google Drive
 
 Para validar lo recibido: descomprimir y `python tools/validate.py <carpeta_de_sesión> ...`.
 
+### Steam Deck / Linux y Mac
+
+El mismo zip lleva `SteamDeck_Mac/hktelemetry.sh` (`instalar | enviar | desinstalar`, bash 3.2+, sin
+dependencias), con la Modding API v77 oficial de Linux y de Mac (`files/api_linux`, `files/api_macos`,
+comprobadas por `SHA256SUMS`). Detecta Linux nativo, Proton (usa la API de Windows y la carpeta
+`compatdata`) y Mac (`hollow_knight.app/Contents/Resources/Data`). Para Linux/Mac no hay huella del
+`Assembly-CSharp.dll` original: se acepta como original si Unity es 2020.2.2 y no contiene ninguna
+Modding API. La release adjunta además `instalar.sh`, que descarga el kit a `~/HKTelemetry` y lo instala
+(`curl -fsSL .../releases/latest/download/instalar.sh | bash`). Pruebas con juegos simulados: el script
+admite `HKT_TEST_OS=Linux|Darwin` y `--yes`.
+
 ### Publicar una versión para los jugadores
 
 El enlace de [JUGADORES.md](JUGADORES.md) apunta a

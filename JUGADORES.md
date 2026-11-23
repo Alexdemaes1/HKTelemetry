@@ -4,7 +4,10 @@
 saltas, atacas o recibes golpes…) para un trabajo de máster de IA. **No cambia nada del juego**: ni
 dificultad, ni ayudas, ni tus partidas guardadas.
 
-Necesitas **Windows 10 u 11** y **Hollow Knight en Steam**. Son unos 5 minutos.
+Necesitas **Hollow Knight en Steam** en **Windows 10/11**, **Steam Deck** o **Mac**. Son unos 5 minutos.
+
+> 🎮 **¿Steam Deck o Mac?** Haz el paso 1 y salta a [Steam Deck y Mac](#steam-deck-y-mac)
+> (los `.bat` solo funcionan en Windows).
 
 ---
 
@@ -21,7 +24,7 @@ Tus partidas guardadas no se tocan.
 
 ## 2. Descarga el mod
 
-👉 **[Descargar HKTelemetry.zip](https://github.com/Alexdemaes1/HKTelemetry/releases/latest/download/HKTelemetry.zip)** (unos 7 MB)
+👉 **[Descargar HKTelemetry.zip](https://github.com/Alexdemaes1/HKTelemetry/releases/latest/download/HKTelemetry.zip)** (unos 21 MB)
 
 > ⚠️ **No** uses el botón verde «Code → Download ZIP» de esta página: eso descarga el código fuente,
 > no el mod.
@@ -48,7 +51,7 @@ de tus partidas y de los ficheros del juego que cambia antes de tocar nada.
 ## 5. Juega
 
 - Abre Hollow Knight desde Steam como siempre. En el menú principal, abajo, verás:
-  **`HKTelemetry v1.0.0 - grabando como <tu nombre de Steam>`**
+  **`HKTelemetry v1.0.1 - grabando como <tu nombre de Steam>`**
 - **Juega como juegues normalmente**: tu partida de siempre o una nueva, el rato que quieras.
 - Arriba a la derecha hay un punto pequeño:
   - 🟢 verde parpadeando = grabando
@@ -59,6 +62,49 @@ de tus partidas y de los ficheros del juego que cambia antes de tocar nada.
   Si no hay internet, lo reintenta la próxima vez que abras el juego.
 
 **No tienes que hacer nada más.** 🙂
+
+---
+
+## Steam Deck y Mac
+
+Primero el **paso 1** de arriba (versión 1.5.78; en la Steam Deck: Hollow Knight → rueda dentada →
+Propiedades → Versiones de juego y betas). Después:
+
+### Steam Deck
+
+1. Pasa al **modo Escritorio**: botón Steam → Apagar → **Cambiar al escritorio**.
+2. Abre **Konsole** (menú de aplicaciones, abajo a la izquierda → Sistema → Konsole).
+   Para escribir: **botón Steam + X** saca el teclado en pantalla.
+3. Escribe esta línea y pulsa Enter:
+
+   ```bash
+   curl -fsSL https://github.com/Alexdemaes1/HKTelemetry/releases/latest/download/instalar.sh | bash
+   ```
+
+   Descarga el mod en la carpeta `HKTelemetry` de tu usuario y lo instala. Lee el aviso y escribe **S**.
+4. Vuelve al **modo Juego** y juega normal. Funciona con la versión de Linux y con Proton.
+
+### Mac
+
+Abre **Terminal** (Aplicaciones → Utilidades), pega la misma línea y pulsa Enter:
+
+```bash
+curl -fsSL https://github.com/Alexdemaes1/HKTelemetry/releases/latest/download/instalar.sh | bash
+```
+
+(También vale descargar el zip, descomprimirlo y hacer doble clic en `SteamDeck_Mac/1_INSTALAR.command`;
+si macOS dice «desarrollador no identificado»: clic derecho → Abrir → Abrir.)
+
+### Enviar datos a mano y desinstalar (Steam Deck y Mac)
+
+Los datos se envían solos igual que en Windows. Si hiciera falta, en Konsole / Terminal:
+
+```bash
+bash ~/HKTelemetry/SteamDeck_Mac/hktelemetry.sh enviar        # deja un fichero en el Escritorio
+bash ~/HKTelemetry/SteamDeck_Mac/hktelemetry.sh desinstalar   # quita el mod y deja el juego como estaba
+```
+
+Para actualizar a una versión nueva, repite la línea de instalación.
 
 ---
 

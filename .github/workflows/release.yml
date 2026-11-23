@@ -1,6 +1,7 @@
 # Publica el kit para los jugadores al subir una etiqueta vX.Y.Z.
 # El zip lo genera tools/make_kit.py en local (necesita las DLL del juego) y se guarda en release/HKTelemetry.zip;
-# este workflow solo lo adjunta a una release nueva. El enlace de JUGADORES.md
+# este workflow solo lo adjunta a una release nueva, junto con kit/unix/instalar.sh (instalación en una línea
+# para Steam Deck y Mac: releases/latest/download/instalar.sh). El enlace de JUGADORES.md
 # (releases/latest/download/HKTelemetry.zip) apunta siempre a la última.
 name: Publicar kit
 
@@ -20,12 +21,14 @@ jobs:
         run: |
           test -f release/HKTelemetry.zip
           unzip -l release/HKTelemetry.zip | grep -q 'HKTelemetry/1_INSTALAR.bat'
+          unzip -l release/HKTelemetry.zip | grep -q 'HKTelemetry/SteamDeck_Mac/hktelemetry.sh'
+          bash -n kit/unix/instalar.sh
           unzip -p release/HKTelemetry.zip HKTelemetry/files/manifest.json | grep -q "\"mod_version\": \"${GITHUB_REF_NAME#v}\""
       - name: Crear la release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" release/HKTelemetry.zip \
+          gh release create "$GITHUB_REF_NAME" release/HKTelemetry.zip kit/unix/instalar.sh \
             --title "HKTelemetry ${GITHUB_REF_NAME#v}" \
             --notes-file release/NOTAS.md \
             --latest

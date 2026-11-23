@@ -26,3 +26,9 @@ HKTelemetry/Version.txt
 
 # El kit publicado (lo adjunta a la release el workflow .github/workflows/release.yml)
 !release/HKTelemetry.zip
+
+# Tablas locales de datos personales (no se versionan)
+mis_datos/
+
+# Tablas locales de datos personales (no se versionan)
+mis_datos/
