@@ -108,6 +108,22 @@ Expand-Archive (Join-Path $Repo 'dist\HKTelemetry.zip') "$S\kit_tmp" -Force
 Copy-Item "$S\kit_tmp\HKTelemetry\files\api\Mono.Cecil.dll" "$K\HKTelemetry\files\api\Mono.Cecil.dll"
 Remove-Item "$S\kit_tmp" -Recurse -Force
 
+"== 7. Copia que no es de Steam, con Assembly-CSharp distinto =="
+$G = New-FakeGame 'nosteam'
+[IO.File]::WriteAllBytes("$G\hollow_knight_Data\Managed\Assembly-CSharp.dll", [byte[]](3..180))
+$orig = Snap $G
+$o = Run $inst $G
+Check "avisa y deja instalar" ($lastExit -eq 0 -and $o -match 'no es id.ntica a la de Steam' -and $o -match 'Modding API v77 instalada')
+$o = Run $unin $G; Check "desinstalar OK" ($o -match 'vuelve a estar como antes')
+$d = Compare-Object $orig (Snap $G); Check "Managed idéntico al original" (-not $d); if ($d) { $d | Format-Table -AutoSize | Out-String | Write-Host }
+
+"== 8. Copia de Steam con Assembly-CSharp distinto: no se toca =="
+$G = New-FakeGame 'st\steamapps\common'
+[IO.File]::WriteAllBytes("$G\hollow_knight_Data\Managed\Assembly-CSharp.dll", [byte[]](3..180))
+$o = Run $inst $G
+Check "cancela con el consejo de Steam" ($lastExit -ne 0 -and $o -match 'Verificar integridad' -and $o -notmatch 'no es id.ntica')
+Check "no ha tocado el juego" (-not (Test-Path -LiteralPath "$G\hollow_knight_Data\HKTelemetry_kit"))
+
 Remove-Item -LiteralPath "$S\juegos [SSD] ñ" -Recurse -Force
 ""
 if ($fail -eq 0) { "TODOS LOS ESCENARIOS OK"; exit 0 } else { "$fail FALLOS"; exit 1 }

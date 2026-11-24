@@ -50,15 +50,34 @@ namespace HKTelemetry.Session
             }
             else
             {
-                if (!Regex.IsMatch(s.InstallId ?? "", "^[0-9a-f]{8}$"))
+                // Copia del id junto a las partidas guardadas: sobrevive a desinstalar el mod o a volver a
+                // poner el juego (los ajustes van en la carpeta del juego, junto a la DLL).
+                string idFile = null;
+                try { idFile = Path.Combine(PersistentDataPath(), "HKTelemetry_install_id.txt"); }
+                catch (Exception e) { Safe.Report("identity.path", e); }
+                string kept = null;
+                try { if (idFile != null && File.Exists(idFile)) kept = File.ReadAllText(idFile).Trim(); }
+                catch (Exception e) { Safe.Report("identity.read", e); }
+
+                bool settingsOk = Regex.IsMatch(s.InstallId ?? "", "^[0-9a-f]{8}$");
+                bool keptOk = kept != null && Regex.IsMatch(kept, "^[0-9a-f]{8}$");
+                if (!settingsOk)
                 {
-                    s.InstallId = Guid.NewGuid().ToString("N").Substring(0, 8);
+                    s.InstallId = keptOk ? kept : Guid.NewGuid().ToString("N").Substring(0, 8);
                     try { save?.Invoke(); } catch (Exception e) { Safe.Report("identity.save", e); }
+                }
+                if (idFile != null && kept != s.InstallId)
+                {
+                    try { File.WriteAllText(idFile, s.InstallId); }
+                    catch (Exception e) { Safe.Report("identity.write", e); }
                 }
                 PlayerId = "U" + s.InstallId;
                 Source = "install_id";
             }
         }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static string PersistentDataPath() => Application.persistentDataPath;
 
         private static void ReadSteam()
         {

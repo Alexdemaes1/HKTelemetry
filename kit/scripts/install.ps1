@@ -43,12 +43,13 @@ try {
     Write-Title "Comprobando el juego"
     $game = Resolve-GameDir $GameDir
     $gameDir = $game.Dir
+    $isSteam = [bool]$game.Steam
     $managed = Get-ManagedDir $gameDir
 
     $unity = Get-UnityVersion $gameDir
     if (-not $unity.StartsWith($man.game.unity_prefix)) {
         Write-Bad ("Tu Hollow Knight no es la versión 1.5.78 (motor Unity " + $unity + ").")
-        Show-WrongVersionHelp
+        Show-WrongVersionHelp $isSteam
         Stop-Kit "Instalación cancelada. No se ha tocado nada."
     }
     $beta = Get-BetaKey $game.Manifest
@@ -84,6 +85,18 @@ try {
     $isApi = $acHash -eq $man.game.api_assembly_csharp_sha256
     $isVanilla = $acHash -eq $man.game.vanilla_assembly_csharp_sha256
 
+    # Copia que no es de Steam con un Assembly-CSharp que no es el de Steam (otra tienda, otra copia o
+    # una API antigua): misma versión del motor, así que se ofrece instalar igual. Se guarda copia de
+    # todo lo que se sustituye y 3_DESINSTALAR.bat lo devuelve tal cual.
+    $acceptUnknown = $false
+    if (-not $isApi -and -not $isVanilla -and -not $isSteam) {
+        Write-Warn "Tu copia del juego no es idéntica a la de Steam (es la versión correcta, pero algún fichero cambia)."
+        Write-Info "Normalmente funciona igual. Antes de tocar nada guardo una copia de los ficheros que cambio:"
+        Write-Info "si el juego no arrancase, 3_DESINSTALAR.bat lo deja exactamente como estaba."
+        if (-not (Read-YesNo "¿Instalar de todas formas?")) { Stop-Kit "Instalación cancelada. No se ha tocado nada." }
+        $acceptUnknown = $true
+    }
+
     if ($isApi -and -not $prevByKit) {
         # Puesta por otro (Lumafly...): no se toca, pero se avisa si está incompleta o es distinta.
         $bad = @(Get-ApiMismatches $managed $man)
@@ -95,7 +108,7 @@ try {
             Write-Ok "La Modding API v77 ya estaba instalada (por ejemplo con Lumafly). No la toco."
         }
     }
-    elseif ($isVanilla -or ($isApi -and $prevByKit)) {
+    elseif ($isVanilla -or $acceptUnknown -or ($isApi -and $prevByKit)) {
         # Instalación nueva, reparación de una instalación a medias, o reinstalación después de que Steam
         # ('Verificar integridad') haya devuelto algunos ficheros originales.
         $stateDir = Get-KitStateDir $gameDir
@@ -142,7 +155,7 @@ try {
             Stop-Kit ("No se han podido copiar bien: " + ($bad -join ', ') + ". ¿Un antivirus? Vuelve a ejecutar 1_INSTALAR.bat o, si sigue fallando, 3_DESINSTALAR.bat y avisa a Alex.")
         }
         $apiByKit = $true
-        if ($isVanilla -and -not $prevByKit) {
+        if (($isVanilla -or $acceptUnknown) -and -not $prevByKit) {
             Write-Ok ("Modding API v77 instalada (" + $man.api_files.Count + " ficheros; copia de seguridad de los originales guardada).")
         } elseif ($copied -gt 0) {
             Write-Ok ("Modding API v77 reparada (" + $copied + " ficheros vueltos a copiar).")
@@ -212,8 +225,12 @@ try {
     }
 
     Write-Title "Listo"
-    Write-Info "Abre Hollow Knight desde Steam y juega normal. En el menú principal, abajo, verás:"
-    Write-Info ("  HKTelemetry v" + $man.mod_version + " - grabando como <tu nombre de Steam>")
+    Write-Info "Abre Hollow Knight como siempre y juega normal. En el menú principal, abajo, verás:"
+    if ($isSteam) {
+        Write-Info ("  HKTelemetry v" + $man.mod_version + " - grabando como <tu nombre de Steam>")
+    } else {
+        Write-Info ("  HKTelemetry v" + $man.mod_version + " - grabando como <tu nombre de Steam o un código como U1a2b3c4d>")
+    }
     Write-Info "Mientras juegas, un punto verde arriba a la derecha indica que está grabando"
     Write-Info "(gris en pausa o menús; ROJO si algo falla: en ese caso avisa a Alex)."
     Write-Info ""

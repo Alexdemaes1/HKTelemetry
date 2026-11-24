@@ -11,7 +11,10 @@
 
 Los datos se envían solos al volver al menú principal.
 
-**Cambios en 1.0.1:** instalación para Steam Deck (Linux nativo o Proton) y Mac; el mod encuentra la cuenta de Steam
-también en Linux y Mac. **En Windows no cambia nada**: si ya lo tienes instalado no hace falta actualizar.
+**Cambios en 1.0.2:** el instalador funciona también con copias de Hollow Knight que no son de Steam (GOG u otras),
+siempre que sean la versión 1.5.78: busca el juego de GOG, deja arrastrar la carpeta del juego a la ventana y acepta
+copias con ficheros distintos de los de Steam (guardando antes los originales). Sin Steam, el código del jugador se
+guarda junto a las partidas y no cambia al reinstalar. Guía: «Si tu juego no es de Steam» en JUGADORES.md.
+**Si ya lo tienes instalado desde Steam, no hace falta actualizar.**
 
 No descargues «Source code»: es el código del mod, no el instalador.

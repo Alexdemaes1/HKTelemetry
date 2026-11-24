@@ -160,8 +160,9 @@ resolve_game() {
         ok "Hollow Knight encontrado en: $GAME"
         return
     fi
-    warn "No he encontrado Hollow Knight en las bibliotecas de Steam."
-    info "En Steam: clic derecho en Hollow Knight > Administrar > Ver archivos locales."
+    warn "No he encontrado Hollow Knight automáticamente."
+    info "Si es de Steam: clic derecho en Hollow Knight > Administrar > Ver archivos locales."
+    info "Si no es de Steam: la carpeta donde lo tengas instalado."
     info "Arrastra esa carpeta a esta ventana (o escribe la ruta) y pulsa Enter."
     while true; do
         GAME="$(ask_line "Carpeta de Hollow Knight (vacío para salir): ")" || die "Cancelado."
@@ -179,7 +180,8 @@ unity_version_ok() {
 
 show_wrong_version_help() {
     info ""
-    info "El mod solo funciona con la versión 1.5.78 de Hollow Knight. Para cambiarla en Steam:"
+    info "El mod solo funciona con la versión 1.5.78 de Hollow Knight. Si tu juego no es de Steam,"
+    info "necesitas una copia de la 1.5.78 (por ejemplo, la de GOG). Para cambiarla en Steam:"
     info "  1. Biblioteca > clic derecho en Hollow Knight > Propiedades."
     info "  2. 'Versiones de juego y betas' > elige '1.5.78.11833'."
     info "  3. Espera a que termine de descargarse y vuelve a ejecutar este instalador."

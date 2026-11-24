@@ -47,7 +47,7 @@ al arrancar el juego la siguiente vez.
   "schema_version": 1,
   "mod_version": "0.1.0",
   "session_id": "uuid4", "launch_id": "uuid4",      // launch_id: uno por arranque del juego
-  "player_id": "S875967793",          // v3: "S" + id de cuenta de Steam (o "U" + id de instalación, o el PlayerId fijo)
+  "player_id": "S875967793",          // v3: "S" + id de cuenta de Steam (o "U" + id de instalación, guardado también en HKTelemetry_install_id.txt junto a las partidas; o el PlayerId fijo)
   "identity": {                         // v3: Session/Identity.cs, leído de ficheros de Steam (no de la API nativa)
     "player_id": "S875967793",
     "source": "steam_active_user",      // steam_active_user | steam_login_users | install_id | settings

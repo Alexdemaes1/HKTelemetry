@@ -10,7 +10,8 @@ No cambia nada del juego: ni dificultad, ni ayudas, ni tus partidas.
 
 ANTES DE EMPEZAR (unos 5 minutos)
 ---------------------------------
-Hace falta Windows 10 u 11 y Hollow Knight comprado en Steam.
+Hace falta Windows 10 u 11 y Hollow Knight en la versión 1.5.78.
+(¿No es de Steam? Mira "SI TU JUEGO NO ES DE STEAM", más abajo.)
 
 1. Cambia el juego a la versión 1.5.78 (el mod solo funciona con esa):
    Steam > Biblioteca > clic derecho en Hollow Knight > Propiedades >
@@ -26,6 +27,19 @@ Hace falta Windows 10 u 11 y Hollow Knight comprado en Steam.
    - Te enseña qué datos se guardan y te pide confirmación (S).
    - Antes de tocar nada guarda una copia de tus partidas y de los ficheros
      del juego que cambia.
+
+
+SI TU JUEGO NO ES DE STEAM (GOG u otra copia)
+---------------------------------------------
+Funciona igual si tu copia es la versión 1.5.78 (si no lo es, el
+instalador te avisa y no toca nada). Salta el paso 1 y:
+- Si el instalador no encuentra el juego: arrastra a la ventana negra la
+  carpeta donde está hollow_knight.exe y pulsa Enter.
+- Si dice que tu copia "no es idéntica a la de Steam": escribe S. Guarda
+  antes los ficheros originales; 3_DESINSTALAR.bat los devuelve.
+- En el menú verás "grabando como U..." (un código al azar en vez de tu
+  nombre de Steam). Se guarda junto a tus partidas y no cambia aunque
+  reinstales.
 
 
 JUGAR

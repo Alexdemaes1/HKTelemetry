@@ -81,18 +81,23 @@ try {
                 }
             }
             $acHash = Get-Sha256 (Join-Path $managed 'Assembly-CSharp.dll')
+            # Copias que no son de Steam: su Assembly-CSharp original es otro; vale si es el de la copia de seguridad.
+            $acBak = Join-Path $backup 'Assembly-CSharp.dll'
+            $acOriginal = ($acHash -eq $man.game.vanilla_assembly_csharp_sha256) -or
+                          ((Test-Path -LiteralPath $acBak) -and $acHash -eq (Get-Sha256 $acBak))
             if (-not $sameVersion) {
                 Remove-Item -LiteralPath $stateDir -Recurse -Force
                 Write-Ok "Ficheros de la Modding API quitados."
                 Write-Info "Por si acaso: Steam > Propiedades > Archivos instalados > 'Verificar integridad de los archivos'."
-            } elseif ($problems -eq 0 -and $acHash -eq $man.game.vanilla_assembly_csharp_sha256) {
+            } elseif ($problems -eq 0 -and $acOriginal) {
                 Remove-Item -LiteralPath $stateDir -Recurse -Force
                 Write-Ok "Modding API quitada: el juego vuelve a estar como antes."
             } else {
                 # Se conserva la copia de seguridad: no se ha podido volver al estado original.
                 Write-Warn "No he podido dejar el juego exactamente como estaba."
                 Write-Info "Para arreglarlo: Steam > clic derecho en Hollow Knight > Propiedades > Archivos instalados >"
-                Write-Info "'Verificar integridad de los archivos'."
+                Write-Info "'Verificar integridad de los archivos'. Si tu juego no es de Steam: la copia de los ficheros"
+                Write-Info ("originales está en " + $backup + "; cópialos a " + $managed + ".")
             }
         } else {
             Write-Info "La Modding API se queda instalada."
@@ -108,8 +113,10 @@ try {
         Write-Info ("  " + $dataRoot)
         Write-Info "Puedes borrar esa carpeta cuando ya los hayas enviado."
     }
-    Write-Info "Si quieres volver a la última versión de Hollow Knight: Steam > Propiedades >"
-    Write-Info "'Versiones de juego y betas' > 'Ninguna'."
+    if ($game.Steam) {
+        Write-Info "Si quieres volver a la última versión de Hollow Knight: Steam > Propiedades >"
+        Write-Info "'Versiones de juego y betas' > 'Ninguna'."
+    }
 }
 catch {
     Write-Bad ("Error inesperado: " + $_.Exception.Message)

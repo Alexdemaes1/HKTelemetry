@@ -134,7 +134,34 @@ function Test-GameDir([string]$dir) {
            (Test-Path -LiteralPath (Join-Path $dir 'UnityPlayer.dll'))
 }
 
-# Devuelve @{ Dir = ...; Manifest = <ruta appmanifest o $null> } o $null.
+# ¿Copia de Steam? Solo por la ruta (...\steamapps\common\...): decide qué instrucciones se enseñan
+# (las de Steam o las genéricas) y si se acepta un Assembly-CSharp desconocido.
+function Test-SteamGameDir([string]$dir) { return [bool]($dir -match '[\\/]steamapps[\\/]common[\\/]') }
+
+# Copias fuera de Steam (GOG u otras): el registro de GOG y sus carpetas por defecto.
+function Get-NonSteamCandidates {
+    $c = New-Object System.Collections.Generic.List[string]
+    foreach ($base in @('HKLM:\SOFTWARE\WOW6432Node\GOG.com\Games', 'HKLM:\SOFTWARE\GOG.com\Games')) {
+        try {
+            foreach ($k in @(Get-ChildItem -Path $base -ErrorAction Stop)) {
+                try {
+                    $p = Get-ItemProperty -Path $k.PSPath -ErrorAction Stop
+                    $name = [string](Get-Prop $p 'gameName')
+                    $path = [string](Get-Prop $p 'path')
+                    if ($name -like '*Hollow Knight*' -and $path) { $c.Add($path) }
+                } catch { }
+            }
+        } catch { }
+    }
+    foreach ($env in @('ProgramFiles(x86)', 'ProgramFiles')) {
+        $pf = [Environment]::GetEnvironmentVariable($env)
+        if ($pf) { $c.Add((Join-Path $pf 'GOG Galaxy\Games\Hollow Knight')) }
+    }
+    $c.Add('C:\GOG Games\Hollow Knight')
+    return $c | Select-Object -Unique
+}
+
+# Devuelve @{ Dir = ...; Manifest = <ruta appmanifest o $null>; Steam = $true/$false } o $null.
 function Find-GameDir {
     foreach ($lib in Get-SteamLibraries) {
         $acf = Join-Path $lib ("steamapps\appmanifest_" + $Script:AppId + ".acf")
@@ -148,8 +175,11 @@ function Find-GameDir {
         if (Test-GameDir $dir) {
             $m = $null
             if (Test-Path -LiteralPath $acf) { $m = $acf }
-            return @{ Dir = $dir; Manifest = $m }
+            return @{ Dir = $dir; Manifest = $m; Steam = $true }
         }
+    }
+    foreach ($dir in Get-NonSteamCandidates) {
+        if (Test-GameDir $dir) { return @{ Dir = $dir; Manifest = $null; Steam = (Test-SteamGameDir $dir) } }
     }
     return $null
 }
@@ -159,22 +189,34 @@ function Resolve-GameDir([string]$override) {
     if ($override) {
         if (-not (Test-GameDir $override)) { Stop-Kit ("En " + $override + " no está Hollow Knight (falta hollow_knight_Data\Managed).") }
         Write-Ok ("Hollow Knight (ruta indicada): " + $override)
-        return @{ Dir = $override; Manifest = $null }
+        return @{ Dir = $override; Manifest = $null; Steam = (Test-SteamGameDir $override) }
     }
     $found = Find-GameDir
     if ($found) {
         Write-Ok ("Hollow Knight encontrado en: " + $found.Dir)
         return $found
     }
-    Write-Warn "No he encontrado Hollow Knight en las bibliotecas de Steam."
-    Write-Info "Abre la carpeta del juego (Steam > Hollow Knight > clic derecho > Administrar >"
-    Write-Info "Ver archivos locales), copia la ruta de la barra de direcciones y pégala aquí."
+    Write-Warn "No he encontrado Hollow Knight automáticamente."
+    Write-Info "Busca la carpeta del juego (la que tiene hollow_knight.exe):"
+    Write-Info "  - Si es de Steam: Steam > clic derecho en Hollow Knight > Administrar > Ver archivos locales."
+    Write-Info "  - Si no es de Steam: la carpeta donde lo tengas instalado o descomprimido."
+    Write-Info "ARRASTRA esa carpeta (o hollow_knight.exe) a esta ventana y pulsa Enter."
+    Write-Info "(También vale copiar la ruta de la barra de direcciones y pegarla con clic derecho.)"
     while ($true) {
-        $p = (Read-Host "  Ruta de la carpeta de Hollow Knight (vacío para salir)").Trim().Trim('"')
+        $p = (Read-Host "  Carpeta de Hollow Knight (vacío para salir)").Trim().Trim('"').Trim("'").Trim()
         if (-not $p) { Stop-Kit "Cancelado." }
         if ((Test-Path -LiteralPath $p -PathType Leaf) -and ($p -like '*.exe')) { $p = Split-Path -Parent $p }
-        if (Test-GameDir $p) { return @{ Dir = $p; Manifest = $null } }
-        Write-Bad "En esa carpeta no está el juego (falta hollow_knight_Data\Managed). Prueba otra vez."
+        if (Test-GameDir $p) { return @{ Dir = $p; Manifest = $null; Steam = (Test-SteamGameDir $p) } }
+        # Carpeta de más arriba (p. ej. la del zip descomprimido): mirar un nivel por debajo.
+        $sub = $null
+        try {
+            $sub = @(Get-ChildItem -LiteralPath $p -Directory -ErrorAction Stop | Where-Object { Test-GameDir $_.FullName }) | Select-Object -First 1
+        } catch { }
+        if ($sub) {
+            Write-Ok ("Hollow Knight encontrado en: " + $sub.FullName)
+            return @{ Dir = $sub.FullName; Manifest = $null; Steam = (Test-SteamGameDir $sub.FullName) }
+        }
+        Write-Bad "En esa carpeta no está el juego (tiene que tener hollow_knight.exe y hollow_knight_Data). Prueba otra vez."
     }
 }
 
@@ -194,12 +236,19 @@ function Get-BetaKey([string]$acf) {
     return $key
 }
 
-function Show-WrongVersionHelp {
+function Show-WrongVersionHelp([bool]$steam = $true) {
     Write-Info ""
-    Write-Info "El mod solo funciona con la versión 1.5.78 de Hollow Knight. Para cambiarla en Steam:"
-    Write-Info "  1. Biblioteca > clic derecho en Hollow Knight > Propiedades."
-    Write-Info "  2. 'Versiones de juego y betas' > elige la versión anterior '1.5.78.11833'."
-    Write-Info "  3. Espera a que Steam termine de descargarla y vuelve a ejecutar 1_INSTALAR.bat."
+    if ($steam) {
+        Write-Info "El mod solo funciona con la versión 1.5.78 de Hollow Knight. Para cambiarla en Steam:"
+        Write-Info "  1. Biblioteca > clic derecho en Hollow Knight > Propiedades."
+        Write-Info "  2. 'Versiones de juego y betas' > elige la versión anterior '1.5.78.11833'."
+        Write-Info "  3. Espera a que Steam termine de descargarla y vuelve a ejecutar 1_INSTALAR.bat."
+    } else {
+        Write-Info "El mod solo funciona con la versión 1.5.78 de Hollow Knight (la anterior a la última"
+        Write-Info "actualización; es la que usan casi todos los mods). La tuya es otra."
+        Write-Info "Necesitas una copia de la 1.5.78 (por ejemplo, la de GOG). Cuando la tengas, vuelve a"
+        Write-Info "ejecutar 1_INSTALAR.bat y elige esa carpeta."
+    }
     Write-Info "Tus partidas guardadas no se tocan."
 }
 
