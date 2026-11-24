@@ -8,8 +8,8 @@
     <Product>HKTelemetry</Product>
     <Description>Records raw Hollow Knight gameplay telemetry for an ML dataset. Logging only, no gameplay changes.</Description>
     <Copyright>Copyright © 2026 Alexdemaes1</Copyright>
-    <AssemblyVersion>1.0.2.0</AssemblyVersion>
-    <FileVersion>1.0.2.0</FileVersion>
+    <AssemblyVersion>1.0.3.0</AssemblyVersion>
+    <FileVersion>1.0.3.0</FileVersion>
     <OutputPath>bin\$(Configuration)\</OutputPath>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>

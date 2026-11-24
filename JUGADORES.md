@@ -54,7 +54,7 @@ de tus partidas y de los ficheros del juego que cambia antes de tocar nada.
 ## 5. Juega
 
 - Abre Hollow Knight desde Steam como siempre. En el menú principal, abajo, verás:
-  **`HKTelemetry v1.0.2 - grabando como <tu nombre de Steam>`**
+  **`HKTelemetry v1.0.3 - grabando como <tu nombre de Steam>`**
 - **Juega como juegues normalmente**: tu partida de siempre o una nueva, el rato que quieras.
 - Arriba a la derecha hay un punto pequeño:
   - 🟢 verde parpadeando = grabando
